@@ -111,7 +111,8 @@ app.post("/onboarding/complete", async (req, res) => {
     c.wa_token = wa_token || DEFAULT_WA_TOKEN;
     c.openai_key = openai_key || OPENAI_API_KEY;
     c.prompt =
-      prompt ||
+    c.prompt = prompt || `Tu es BeautyAgent de la clinique ${clinic_name}. Qualifie les leads en chirurgie esthétique.`;
+
     c.prompt = prompt || `Tu es BeautyAgent de la clinique ${clinic_name}. Qualifie les leads en chirurgie esthétique.`;
 
     writeDB(db);
@@ -215,5 +216,6 @@ app.get("/", (_req, res) => res.send("BeautyAgent OK"));
 app.listen(port, () => {
   console.log("Running on :" + port);
 });
+
 
 
