@@ -11,7 +11,7 @@ app.use("/stripe-webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* Mini DB locale (ok pour MVP) */
+/* Mini DB locale (JSON) */
 const DB_PATH = "./db.json";
 if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, JSON.stringify({ clients: [] }, null, 2));
 const readDB = () => JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
@@ -28,6 +28,7 @@ const {
   DEFAULT_WA_TOKEN,
   DEFAULT_PHONE_NUMBER_ID,
 } = process.env;
+
 const port = Number(PORT || 3000);
 const stripe = new Stripe(STRIPE_SECRET);
 
@@ -132,7 +133,7 @@ app.post("/webhook", async (req, res) => {
       const useOpenAI = client?.openai_key || OPENAI_API_KEY;
       const sysPrompt = client?.prompt || "Tu es BeautyAgent. Qualifie et propose un RDV.";
 
-      // Génère une réponse (fallback si erreur)
+      // Génère une réponse
       let reply = "Merci pour votre message.";
       try {
         const completion = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -177,9 +178,8 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-/* Health */
+/* Health check */
 app.get("/", (_req, res) => res.send("BeautyAgent OK"));
 
-/* Start */
+/* Start server */
 app.listen(port, () => console.log("Running on :" + port));
-
