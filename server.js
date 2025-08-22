@@ -13,7 +13,8 @@ app.use(express.urlencoded({ extended: true }));
 
 /* Mini DB locale (JSON) */
 const DB_PATH = "./db.json";
-if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, JSON.stringify({ clients: [] }, null, 2));
+if (!fs.existsSync(DB_PATH))
+  fs.writeFileSync(DB_PATH, JSON.stringify({ clients: [] }, null, 2));
 const readDB = () => JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
 const writeDB = (data) => fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 
@@ -23,11 +24,15 @@ const {
   STRIPE_SECRET,
   STRIPE_PRICE_ID,
   STRIPE_WEBHOOK_SECRET,
-  VERIFY_TOKEN = "beautyagent_verify",
+  VERIFY_TOKEN,
   OPENAI_API_KEY,
   DEFAULT_WA_TOKEN,
   DEFAULT_PHONE_NUMBER_ID,
 } = process.env;
+
+// Token attendu : variable d’environnement (si définie) ou valeur par défaut,
+// en supprimant les espaces éventuels
+const expectedToken = (VERIFY_TOKEN || "beautyagent_verify").trim();
 
 const port = Number(PORT || 3000);
 const stripe = new Stripe(STRIPE_SECRET);
@@ -82,7 +87,8 @@ app.post("/stripe-webhook", (req, res) => {
 /* 3) Onboarding */
 app.post("/onboarding/complete", async (req, res) => {
   try {
-    const { session_id, clinic_name, phone_number_id, wa_token, openai_key, prompt } = req.body || {};
+    const { session_id, clinic_name, phone_number_id, wa_token, openai_key, prompt } =
+      req.body || {};
     const db = readDB();
     const c = (db.clients ??= []).find((x) => x.id === session_id);
     if (!c) return res.status(404).json({ error: "session_not_found" });
@@ -107,9 +113,11 @@ app.post("/onboarding/complete", async (req, res) => {
 /* 4) Webhook WhatsApp */
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
+  const token = (req.query["hub.verify_token"] || "").trim();
   const challenge = req.query["hub.challenge"];
-  if (mode === "subscribe" && token === VERIFY_TOKEN) return res.status(200).send(challenge);
+  if (mode === "subscribe" && token === expectedToken) {
+    return res.status(200).send(challenge);
+  }
   return res.sendStatus(403);
 });
 
@@ -182,4 +190,9 @@ app.post("/webhook", async (req, res) => {
 app.get("/", (_req, res) => res.send("BeautyAgent OK"));
 
 /* Start server */
-app.listen(port, () => console.log("Running on :" + port));
+const start = async () => {
+  app.listen(port, () => {
+    console.log(`Running on :${port}`);
+  });
+};
+start();
