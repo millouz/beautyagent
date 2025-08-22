@@ -162,13 +162,13 @@ app.post("/webhook", async (req, res) => {
         client?.wa_token ||
         DEFAULT_WA_TOKEN ||
         ""
-      ).replace(/\s/g, ""); // supprime tous les espaces et retours à la ligne
+      ).replace(/\s/g, "");
       const useOpenAI = (client?.openai_key || OPENAI_API_KEY || "").trim();
       const sysPrompt =
         client?.prompt ||
         "Tu es BeautyAgent. Qualifie le prospect et propose un rendez-vous.";
 
-      // Génère une réponse avec OpenAI
+      // Génère une réponse avec OpenAI (modèle gpt-3.5-turbo)
       let reply = "Merci pour votre message.";
       try {
         const completion = await fetch(
@@ -180,7 +180,8 @@ app.post("/webhook", async (req, res) => {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "gpt-4o-mini",
+              model: "gpt-3.5-turbo",
+              max_tokens: 200,
               temperature: 0.4,
               messages: [
                 { role: "system", content: sysPrompt },
