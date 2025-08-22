@@ -32,8 +32,7 @@ const {
   DEFAULT_PHONE_NUMBER_ID,
 } = process.env;
 
-// Token attendu : on prend la valeur définie dans VERIFY_TOKEN ou, à défaut,
-// la chaîne "beautyagent_verify", en supprimant les espaces superflus
+// Token attendu : valeur définie dans VERIFY_TOKEN ou, à défaut, "beautyagent_verify"
 const expectedToken = (VERIFY_TOKEN || "beautyagent_verify").trim();
 
 // Port d’écoute (Render fournit automatiquement PORT dans l’environnement)
@@ -132,8 +131,6 @@ app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = (req.query["hub.verify_token"] || "").trim();
   const challenge = req.query["hub.challenge"];
-  // on accepte si le mode est “subscribe” et que le token correspond
-  // soit à expectedToken, soit à la valeur de secours
   if (
     mode === "subscribe" &&
     (token === expectedToken || token === "beautyagent_verify")
@@ -160,8 +157,13 @@ app.post("/webhook", async (req, res) => {
         (x) => x.phone_number_id === phoneNumberId && x.status === "active"
       );
 
-      const useToken = client?.wa_token || DEFAULT_WA_TOKEN;
-      const useOpenAI = client?.openai_key || OPENAI_API_KEY;
+      // Nettoie le token pour éviter les caractères invalides
+      const useToken = (
+        client?.wa_token ||
+        DEFAULT_WA_TOKEN ||
+        ""
+      ).replace(/\s/g, ""); // supprime tous les espaces et retours à la ligne
+      const useOpenAI = (client?.openai_key || OPENAI_API_KEY || "").trim();
       const sysPrompt =
         client?.prompt ||
         "Tu es BeautyAgent. Qualifie le prospect et propose un rendez-vous.";
