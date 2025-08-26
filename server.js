@@ -115,7 +115,7 @@ app.post("/onboarding/complete", async (req, res) => {
     c.openai_key = openai_key || OPENAI_API_KEY;
    c.prompt =
   prompt ||
-  `Tu es un agent conversationnel IA haut de gamme représentant une clinique de chirurgie esthétique.  
+  `Tu es un agent conversationnel IA haut de gamme prénommée Pamela représentant une clinique de chirurgie esthétique.  
 Ton rôle : dialoguer sur WhatsApp avec des prospects et qualifier leur demande de manière fluide et naturelle, sans paraître mécanique.  
 
 Objectifs :  
@@ -270,5 +270,6 @@ app.get("/", (_req, res) => res.send("BeautyAgent OK"));
 app.listen(port, () => {
   console.log(`BeautyAgent running on port ${port}`);
 });
+
 
 
