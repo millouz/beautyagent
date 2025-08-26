@@ -5,13 +5,10 @@ import fs from "fs";
 
 const app = express();
 
-/* Stripe veut le body brut pour vérifier la signature */
 app.use("/stripe-webhook", express.raw({ type: "application/json" }));
-/* JSON normal pour le reste */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-/* Mini base JSON locale */
 const DB_PATH = "./db.json";
 if (!fs.existsSync(DB_PATH)) {
   fs.writeFileSync(DB_PATH, JSON.stringify({ clients: [] }, null, 2));
@@ -20,7 +17,6 @@ const readDB = () => JSON.parse(fs.readFileSync(DB_PATH, "utf8"));
 const writeDB = (data) =>
   fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 
-/* Variables d’environnement */
 const {
   PORT,
   STRIPE_SECRET,
@@ -32,16 +28,11 @@ const {
   DEFAULT_PHONE_NUMBER_ID,
 } = process.env;
 
-// Token attendu : valeur définie dans VERIFY_TOKEN ou, à défaut, "beautyagent_verify"
 const expectedToken = (VERIFY_TOKEN || "beautyagent_verify").trim();
-
-// Port d’écoute (Render fournit automatiquement PORT dans l’environnement)
 const port = Number(PORT || 3000);
-
-// Instance Stripe
 const stripe = new Stripe(STRIPE_SECRET);
 
-/* 1) Création d’une session Checkout (abonnement) */
+/* ---------- CHECKOUT ---------- */
 app.post("/checkout/create", async (req, res) => {
   try {
     const { email } = req.body || {};
@@ -60,7 +51,7 @@ app.post("/checkout/create", async (req, res) => {
   }
 });
 
-/* 2) Webhook Stripe */
+/* ---------- STRIPE WEBHOOK ---------- */
 app.post("/stripe-webhook", (req, res) => {
   try {
     const sig = req.headers["stripe-signature"];
@@ -93,7 +84,7 @@ app.post("/stripe-webhook", (req, res) => {
   }
 });
 
-/* 3) Fin d’onboarding pour un client */
+/* ---------- ONBOARDING ---------- */
 app.post("/onboarding/complete", async (req, res) => {
   try {
     const {
@@ -113,50 +104,9 @@ app.post("/onboarding/complete", async (req, res) => {
     c.phone_number_id = phone_number_id || DEFAULT_PHONE_NUMBER_ID;
     c.wa_token = wa_token || DEFAULT_WA_TOKEN;
     c.openai_key = openai_key || OPENAI_API_KEY;
-    // Nouveau script par défaut pour l’agent
     c.prompt =
       prompt ||
-      `Tu es Pamela, un agent conversationnel IA haut de gamme représentant une clinique de chirurgie esthétique.
-Ton rôle : dialoguer sur WhatsApp avec des prospects et qualifier leur demande de manière fluide et naturelle, sans paraître mécanique.
-
-Objectifs :
-1. Répondre avec tact et professionnalisme aux questions fréquentes (interventions, délais, récupération, budget indicatif), sans donner de diagnostic médical.
-2. Collecter progressivement les informations clés en posant des questions courtes, simples et adaptées au fil de la conversation :
-   - Type d’intervention souhaitée
-   - Objectif recherché (esthétique, correctif, autre)
-   - Budget disponible (fourchette ou maximum)
-   - Délai/timing souhaité (urgent, 1-3 mois, 3-12 mois, plus tard)
-   - Antécédents médicaux pertinents (grossesse, tabac, maladies chroniques, opérations récentes, allergies)
-   - Nom, prénom, âge
-   - Meilleur moyen de contact (WhatsApp, appel, email)
-3. Classer automatiquement le prospect en :
-   - **CHAUD** : budget clair + projet <3 mois
-   - **TIEDE** : budget flou/limité ou projet à moyen terme
-   - **FROID** : curiosité, pas de budget ni de timing
-4. Proposer toujours une prochaine étape claire : prise de rendez-vous (présentiel ou visio) avec le chirurgien ou son assistante.
-
-Style :
-- Messages courts (1–2 phrases max).
-- Ton chaleureux, haut de gamme, rassurant.
-- Utilise des émojis légers pour humaniser (✨, 😊, 📅) mais jamais excessifs.
-- Jamais de jargon médical, reste clair et accessible.
-
-Sortie attendue à la fin de chaque conversation (non envoyée au prospect, mais transmise à l’assistante) :
-
-📋 **Fiche lead**
-Nom :
-Prénom :
-Âge :
-Contact : [WhatsApp / email / téléphone]
-Type d’intervention :
-Objectif :
-Budget :
-Timing :
-Infos médicales :
-Préférence de contact :
-Catégorie lead : [CHAUD / TIEDE / FROID]
-Commentaires utiles :
-`;
+      PROMPT_DEFAULT; // 👉 voir constante PROMPT_DEFAULT ci-dessous
     writeDB(db);
 
     res.json({ ok: true });
@@ -166,8 +116,55 @@ Commentaires utiles :
   }
 });
 
-/* 4) Webhook WhatsApp (validation et réception des messages) */
-// Validation du webhook (GET)
+/* ---------- PROMPT PAR DÉFAUT ---------- */
+const PROMPT_DEFAULT = `Tu es un agent conversationnel IA haut de gamme représentant une clinique de chirurgie esthétique.
+Ton rôle : dialoguer sur WhatsApp avec des prospects et qualifier leur demande de manière fluide et naturelle, sans paraître mécanique.
+
+Règles de style :
+- Messages courts (1–2 phrases max).
+- Ton chaleureux, haut de gamme, rassurant. Émojis légers (✨, 😊, 📅) mais jamais excessifs.
+- Pas de jargon médical. Pas de diagnostic ni de promesse de résultat.
+- Ne répète pas “Bonjour” à chaque message. Ne te représente pas si l’utilisateur t’a déjà identifié.
+- Une seule question à la fois. Pas de questions génériques ; pose des questions ciblées liées à la dernière réponse.
+
+Objectifs de qualification (les obtenir progressivement) :
+- Type d’intervention souhaitée
+- Objectif recherché (esthétique, correctif, autre)
+- Budget (fourchette ou maximum)
+- Timing (urgent, 1–3 mois, 3–12 mois, plus tard)
+- Antécédents pertinents (grossesse, tabac, maladies chroniques, opérations récentes, allergies)
+- Nom, prénom, âge
+- Meilleur moyen de contact (WhatsApp, appel, email)
+
+Logique de priorisation :
+- CHAUD : budget clair + projet < 3 mois
+- TIEDE : budget flou/limité ou projet à moyen terme
+- FROID : curiosité, pas de budget ni de timing
+
+Prochaine étape :
+- Toujours proposer un RDV (présentiel/visio) avec le chirurgien ou son assistante dès que les infos clés sont suffisantes.
+
+Cas fréquents :
+- “Qui es-tu ?” → “Je suis l’assistante IA de la clinique. Je vous aide à qualifier votre demande 😊”
+- Greffe de cheveux → demande les zones concernées (golfes, tonsure, ligne frontale), niveau de perte, âge, budget, timing, antécédents (traitements, tabac).
+
+Sortie interne (à transmettre à l’assistante, ne pas l’envoyer au prospect) en fin d’échange :
+📋 Fiche lead
+Nom :
+Prénom :
+Âge :
+Contact : [WhatsApp / email / téléphone]
+Type d’intervention :
+Objectif :
+Budget :
+Timing :
+Infos médicales :
+Préférence de contact :
+Catégorie lead : [CHAUD / TIEDE / FROID]
+Commentaires utiles :
+`;
+
+/* ---------- WEBHOOK VALIDATION ---------- */
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = (req.query["hub.verify_token"] || "").trim();
@@ -181,7 +178,7 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// Réception des messages WhatsApp (POST)
+/* ---------- WEBHOOK MESSAGES ---------- */
 app.post("/webhook", async (req, res) => {
   try {
     const entry = req.body.entry?.[0];
@@ -189,16 +186,14 @@ app.post("/webhook", async (req, res) => {
     const msg = change?.messages?.[0];
     const phoneNumberId = change?.metadata?.phone_number_id;
     const from = msg?.from;
-    const text = msg?.text?.body || "";
+    let text = msg?.text?.body || "";
 
     if (from && text && phoneNumberId) {
-      // Cherche un client actif correspondant au numéro
       const db = readDB();
       const client = (db.clients ?? []).find(
         (x) => x.phone_number_id === phoneNumberId && x.status === "active"
       );
 
-      // Nettoie les jetons et clés
       const useToken = (
         client?.wa_token ||
         DEFAULT_WA_TOKEN ||
@@ -206,52 +201,40 @@ app.post("/webhook", async (req, res) => {
       ).replace(/\s/g, "");
       const useOpenAI = (client?.openai_key || OPENAI_API_KEY || "").trim();
 
-      // Prompt système : utilise le prompt personnalisé du client ou le nouveau prompt par défaut
-      const sysPrompt =
-        client?.prompt ||
-        `Tu es un agent conversationnel IA haut de gamme représentant une clinique de chirurgie esthétique.
-Ton rôle : dialoguer sur WhatsApp avec des prospects et qualifier leur demande de manière fluide et naturelle, sans paraître mécanique.
+      const sysPrompt = client?.prompt || PROMPT_DEFAULT;
 
-Objectifs :
-1. Répondre avec tact et professionnalisme aux questions fréquentes (interventions, délais, récupération, budget indicatif), sans donner de diagnostic médical.
-2. Collecter progressivement les informations clés en posant des questions courtes, simples et adaptées au fil de la conversation :
-   - Type d’intervention souhaitée
-   - Objectif recherché (esthétique, correctif, autre)
-   - Budget disponible (fourchette ou maximum)
-   - Délai/timing souhaité (urgent, 1-3 mois, 3-12 mois, plus tard)
-   - Antécédents médicaux pertinents (grossesse, tabac, maladies chroniques, opérations récentes, allergies)
-   - Nom, prénom, âge
-   - Meilleur moyen de contact (WhatsApp, appel, email)
-3. Classer automatiquement le prospect en :
-   - **CHAUD** : budget clair + projet <3 mois
-   - **TIEDE** : budget flou/limité ou projet à moyen terme
-   - **FROID** : curiosité, pas de budget ni de timing
-4. Proposer toujours une prochaine étape claire : prise de rendez-vous (présentiel ou visio) avec le chirurgien ou son assistante.
+      // Few-shot pour guider l’IA
+      const fewShot = [
+        { role: "user", content: "Qui es tu ?" },
+        {
+          role: "assistant",
+          content:
+            "Je suis l’assistante IA de la clinique. Je vous aide à qualifier votre demande 😊",
+        },
+        { role: "user", content: "Je souhaite me renseigner pour une greffe de cheveux" },
+        {
+          role: "assistant",
+          content:
+            "Bien noté 😊 Quelles zones vous gênent le plus (golfes, tonsure, ligne frontale) ?",
+        },
+      ];
 
-Style :
-- Messages courts (1–2 phrases max).
-- Ton chaleureux, haut de gamme, rassurant.
-- Utilise des émojis légers pour humaniser (✨, 😊, 📅) mais jamais excessifs.
-- Jamais de jargon médical, reste clair et accessible.
+      const messages = [
+        { role: "system", content: sysPrompt },
+        ...fewShot,
+        { role: "user", content: text },
+      ];
 
-Sortie attendue à la fin de chaque conversation (non envoyée au prospect, mais transmise à l’assistante) :
+      // Garde-fou anti-salutations vides
+      const normalized = text.toLowerCase().trim();
+      if (["bonjour", "salut", "hello"].includes(normalized)) {
+        messages.push({
+          role: "assistant",
+          content:
+            "Bonjour 😊 Je suis l’assistante IA de la clinique. Quelle intervention souhaitez-vous explorer en priorité ?",
+        });
+      }
 
-📋 **Fiche lead**
-Nom :
-Prénom :
-Âge :
-Contact : [WhatsApp / email / téléphone]
-Type d’intervention :
-Objectif :
-Budget :
-Timing :
-Infos médicales :
-Préférence de contact :
-Catégorie lead : [CHAUD / TIEDE / FROID]
-Commentaires utiles :
-`;
-
-      // Génère une réponse avec OpenAI
       let reply = "Merci pour votre message.";
       try {
         const completion = await fetch(
@@ -264,22 +247,19 @@ Commentaires utiles :
             },
             body: JSON.stringify({
               model: "gpt-3.5-turbo",
+              temperature: 0.3,
               max_tokens: 200,
-              temperature: 0.4,
-              messages: [
-                { role: "system", content: sysPrompt },
-                { role: "user", content: text },
-              ],
+              messages,
             }),
           }
         ).then((r) => r.json());
+
         reply =
           completion?.choices?.[0]?.message?.content?.slice(0, 1000) || reply;
       } catch (e) {
         console.error("openai_error:", e);
       }
 
-      // Envoi de la réponse via l’API WhatsApp
       await fetch(
         `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
         {
@@ -297,7 +277,6 @@ Commentaires utiles :
         }
       );
     }
-    // Répond immédiatement à WhatsApp
     res.sendStatus(200);
   } catch (e) {
     console.error("whatsapp_webhook_error:", e);
@@ -305,10 +284,9 @@ Commentaires utiles :
   }
 });
 
-/* 5) Route de health check */
+/* ---------- HEALTH CHECK ---------- */
 app.get("/", (_req, res) => res.send("BeautyAgent OK"));
 
-/* Démarrage du serveur */
 app.listen(port, () => {
   console.log(`BeautyAgent running on port ${port}`);
 });
