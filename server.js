@@ -103,8 +103,8 @@ const validateSessionData = (d) => {
   return missing.length === 0 ? null : `Champs manquants: ${missing.join(", ")}`;
 };
 
-const normalize = (v) => String(v ?? "").trim();
-const sameId = (a, b) => normalize(a) === normalize(b);
+const normalizeS = (v) => String(v ?? "").trim();
+const sameId = (a, b) => normalizeS(a) === normalizeS(b);
 
 /* =========================================================
  *  PROMPT PAR DÉFAUT
@@ -114,124 +114,101 @@ Tu es Pamela, l’assistante personnelle de la clinique de chirurgie esthétique
 Ton rôle : échanger sur WhatsApp comme une assistante humaine expérimentée et chaleureuse, jamais comme une IA.
 
 🎯 Style de communication
-
 Messages courts, naturels, toujours en 1–2 phrases.
-
 Ton empathique, professionnel, haut de gamme, avec un petit sourire ou un emoji subtil pour créer de la proximité (✨, 😊, 📅).
-
 Évite tout langage robotique (pas de formulations mécaniques ni de répétitions inutiles).
-
 Tu adaptes ton vocabulaire au prospect, comme une vraie assistante qui comprend et s’intéresse sincèrement.
-
 Pas de jargon médical, pas de diagnostic, pas de promesse de résultat.
 
 🗂 Qualification progressive
-
 Tu obtiens les informations essentielles comme dans une vraie conversation humaine, en douceur, question par question :
-
 Type d’intervention souhaitée.
-
 Objectif recherché (esthétique, correctif, autre).
-
 Budget (fourchette ou maximum).
-
 Délai souhaité (urgent, 1–3 mois, 3–12 mois, plus tard).
-
 Antécédents pertinents (grossesse, tabac, maladies chroniques, opérations récentes, allergies).
-
 Identité : nom, prénom, âge.
-
 Meilleur moyen de contact (WhatsApp, appel, email).
 
 🔥 Logique de lead
-
 CHAUD : budget clair + projet < 3 mois.
-
 TIEDE : budget flou ou projet moyen terme.
-
 FROID : curiosité, pas de budget ni de timing.
 
 📌 Étape finale
-
 Quand tu as assez d’infos, propose naturellement un RDV avec le chirurgien ou son assistante (présentiel ou visio).
 
 ⚡ Gestion de cas fréquents
-
-"Qui es-tu ?" → "Je suis Pamela, l’assistante de la clinique. Je suis là pour vous guider et comprendre votre demande 😊"
-
+"Qui es-tu ?" → "Je suis Pamela, l’assistante de la clinique. Je vous accompagne 😊"
 Greffe de cheveux → demander zones concernées (golfes, tonsure, ligne frontale), niveau de perte, âge, budget, timing, antécédents (traitements, tabac).
 
 📝 Sortie interne (jamais envoyée au prospect)
-
 En fin d’échange, remplis cette fiche :
-
 📋 Fiche lead
-
 Nom :
-
 Prénom :
-
 Âge :
-
 Contact : [WhatsApp / email / téléphone]
-
 Type d’intervention :
-
 Objectif :
-
 Budget :
-
 Timing :
-
 Infos médicales :
-
 Préférence de contact :
-
 Catégorie lead : [CHAUD / TIEDE / FROID]
-
 Commentaires utiles :
 `;
 
 /* =========================================================
- *  VARIATIONS DE QUESTIONS & PROFIL
+ *  VARIATIONS DE QUESTIONS & PROFIL — VERSION HUMANISÉE
  * =======================================================*/
+const ACK = [
+  "Parfait.",
+  "Très clair.",
+  "Je vous suis.",
+  "Merci pour la précision.",
+  "Je note."
+];
+
 const ASK_TEMPLATES = {
   intervention: [
-    "Sur quelle intervention souhaitez-vous des infos en priorité ?",
-    "Quelle intervention avez-vous en tête exactement ? 😊",
-    "Vous penchez pour quelle intervention précisément ?",
+    "Sur quelle intervention souhaitez-vous avancer en priorité ?",
+    "Quelle intervention avez-vous en tête exactement 😊 ?",
+    "Vous pensiez à quelle intervention précisément ?",
   ],
   objectif: [
-    "Quel est votre objectif principal (esthétique, correctif…)?",
-    "Vous visez plutôt un rendu esthétique ou une correction précise ?",
+    "Quel est l’objectif principal recherché, plutôt esthétique ou correctif ?",
+    "Vous visez quel résultat en priorité, esthétique ou une correction précise ?",
   ],
   budget: [
-    "Vous aviez un budget en tête (même approximatif) ?",
-    "Quelle fourchette de budget envisagez-vous ?",
+    "Avez-vous une enveloppe en tête, même approximative ?",
+    "Quelle fourchette de budget imaginez-vous pour ce projet ?",
   ],
   timing: [
-    "Pour le timing, c’est plutôt urgent, 1–3 mois, 3–12 mois ou plus tard ?",
-    "Vous imaginez ça pour quand (urgent, 1–3 mois, 3–12 mois, plus tard) ?",
+    "Vous imaginez ça pour quand : urgent, 1–3 mois, 3–12 mois ou plus tard ?",
+    "Côté timing, on est sur urgent, 1–3 mois, 3–12 mois ou plus tard ?",
   ],
   medical: [
-    "Des antécédents à signaler (grossesse, tabac, maladies, opérations, allergies) ?",
-    "Côté santé, quelque chose à noter (tabac, maladies, opérations récentes) ?",
+    "Des éléments de santé à signaler : tabac, allergies, maladies, opérations récentes, grossesse ?",
+    "Côté santé, quelque chose à noter : tabac, traitements, antécédents, allergies ?",
   ],
   identite: [
-    "Je note, votre nom/prénom et votre âge ?",
-    "Pouvez-vous me donner nom, prénom et âge pour le dossier ?",
+    "Je complète le dossier : votre nom, prénom et votre âge ?",
+    "Pour le dossier, votre nom, prénom et âge s’il vous plaît.",
   ],
   contact: [
-    "On vous recontacte plutôt par WhatsApp, appel ou email ?",
-    "Meilleur moyen de contact pour vous (WhatsApp/appel/email) ?",
+    "On vous recontacte de préférence sur WhatsApp, par appel ou par email ?",
+    "Quel canal vous arrange le plus : WhatsApp, appel ou email ?",
   ],
   rdv: [
-    "Je peux vous proposer un créneau (présentiel/visio) si vous voulez 📅",
-    "Souhaitez-vous que je vous propose un RDV (visio/présentiel) ? 📅",
+    "Souhaitez-vous que je propose un créneau avec le chirurgien ou son assistante, en visio ou sur place 📅 ?",
+    "Je peux vous proposer un rendez-vous, visio ou présentiel. On regarde un créneau 📅 ?",
   ],
 };
+
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+/* ===== CONVERSATION STATE ===== */
 const ensureConversation = (db, convId, clientId) => {
   db.conversations ??= {};
   if (!db.conversations[convId]) {
@@ -242,11 +219,11 @@ const ensureConversation = (db, convId, clientId) => {
       profile: {
         intervention: null,
         objectif: null,
-        budget: null,
-        timing: null,
+        budget: null,            // {min?, max?} | {approx?}
+        timing: null,            // "urgent" | "1–3 mois" | "3–12 mois" | "plus tard"
         medical: null,
-        identite: null,
-        contact: null,
+        identite: null,          // { nom, prenom, age }
+        contact: null,           // { mode, valeur }
         lastAsked: null,
         lastAskedAt: 0,
       },
@@ -255,27 +232,125 @@ const ensureConversation = (db, convId, clientId) => {
   return db.conversations[convId];
 };
 
-const extractInfo = (text, profile) => {
-  const t = (text || "").toLowerCase();
-  if (/greffe|implant|rhinoplast|lifting|botox|acide|liposuc/.test(t)) profile.intervention ??= text;
-  const m = t.match(/(\d[\d\s]{1,6})\s?€|budget\s*(\d[\d\s]{1,6})/);
-  if (m) profile.budget ??= (m[1] || m[2])?.trim();
-  if (/urgent|asap|semaine/.test(t)) profile.timing ??= "urgent";
-  if (/(1[-–]3|1 à 3)\s*mois/.test(t)) profile.timing ??= "1–3 mois";
-  if (/(3[-–]12|3 à 12)\s*mois/.test(t)) profile.timing ??= "3–12 mois";
-  if (/plus tard|> ?12/.test(t)) profile.timing ??= "plus tard";
-  if (/grossesse|diab[eè]te|allerg|op[ée]r|tabac/.test(t)) profile.medical ??= text;
+/* ===== EXTRACTION ROBUSTE ===== */
+const normalize = (s) => (s || "").toLowerCase().normalize("NFKD").replace(/[’']/g,"'");
+const euroToNumber = (s) => {
+  if (!s) return null;
+  let x = s.replace(/\s/g,"").toLowerCase();
+  const k = x.match(/^(\d+(?:[.,]\d+)?)k$/);
+  if (k) return Math.round(parseFloat(k[1].replace(",",".")) * 1000);
+  x = x.replace(/[€]|euros?/g,"").replace(/,/g,".");
+  const n = parseFloat(x);
+  return isNaN(n) ? null : Math.round(n);
 };
 
+const extractInfo = (text, profile) => {
+  const raw = text || "";
+  const t = normalize(raw);
+
+  // Intervention
+  if (/(greffe|implant|fue|rhinoplast|septoplast|lifting|bl[eé]pharo|abdominoplast|liposuc|liposuccion|lipofilling|otoplast|botox|toxine|acide hyal|hyaluronique|peeling|laser|augmentation mammaire|mastopexie|reduction mammaire|réduction mammaire|gynecomastie|gyn[eé]comastie)/.test(t)) {
+    profile.intervention ??= raw;
+  }
+
+  // Objectif
+  if (/(esthetique|esthétique|harmonie|volume|rides|cicatrices|correction|deviation|fonctionnel|respirer|asym[eé]trie)/.test(t)) {
+    profile.objectif ??= raw;
+  }
+
+  // Budget
+  let b = null;
+  const brange = t.match(/(?:entre|de)\s+(\d[\d\s.,k]+)\s+(?:a|et)\s+(\d[\d\s.,k]+)/);
+  const b1 = t.match(/(?:budget|max|jusqu'?a)\s*(\d[\d\s.,k]+)/);
+  const b2 = t.match(/(\d[\d\s.,k]+)\s*(?:€|euros?)/);
+  if (brange) {
+    const n1 = euroToNumber(brange[1]);
+    const n2 = euroToNumber(brange[2]);
+    if (n1 && n2) b = { min: Math.min(n1,n2), max: Math.max(n1,n2) };
+  } else if (b1) {
+    const n = euroToNumber(b1[1]);
+    if (n) b = { max: n };
+  } else if (b2) {
+    const n = euroToNumber(b2[1]);
+    if (n) b = { approx: n };
+  }
+  if (b && !profile.budget) profile.budget = b;
+
+  // Timing
+  if (/urgent|asap|semaine|ce mois|prochain mois|au plus vite/.test(t)) profile.timing ??= "urgent";
+  if (/(1\s*[–-]\s*3|1 a 3|1 à 3)\s*mois/.test(t)) profile.timing ??= "1–3 mois";
+  if (/(3\s*[–-]\s*12|3 a 12|3 à 12)\s*mois/.test(t)) profile.timing ??= "3–12 mois";
+  if (/plus tard|apres|après|> ?12|l'an prochain|l an prochain|annee prochaine|année prochaine/.test(t)) profile.timing ??= "plus tard";
+
+  // Médical
+  if (/(grossesse|enceinte|allerg|diab[eè]te|cardiaque|thyro[iî]de|asthme|anticoagulant|immuno|operation|op[ée]r|chirurgie|cicatrice|tabac|fumeur|traitement|hormon)/.test(t)) {
+    profile.medical ??= raw;
+  }
+
+  // Identité
+  const age = t.match(/(\d{2})\s*ans/);
+  const email = t.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/);
+  const phone = t.match(/(\+?\d[\d\s.-]{7,}\d)/);
+  if (!profile.identite) {
+    const name1 = t.match(/je m'appelle\s+([a-zà-öø-ÿ'-]+\s+[a-zà-öø-ÿ'-]+)/);
+    const name2 = t.match(/moi c'?est\s+([a-zà-öø-ÿ'-]+\s+[a-zà-öø-ÿ'-]+)/);
+    const full = (name1?.[1] || name2?.[1] || "").trim();
+    if (full || age) {
+      const parts = full.split(/\s+/);
+      profile.identite = {
+        nom: parts.length > 1 ? parts[parts.length-1] : null,
+        prenom: parts.length > 1 ? parts.slice(0,-1).join(" ") : (full || null),
+        age: age ? parseInt(age[1],10) : null
+      };
+    }
+  } else if (age && !profile.identite.age) {
+    profile.identite.age = parseInt(age[1],10);
+  }
+
+  // Contact préféré
+  if (email && !profile.contact) profile.contact = { mode: "email", valeur: email[0] };
+  if (phone && !profile.contact) profile.contact = { mode: "téléphone", valeur: phone[1].replace(/\s+/g," ") };
+  if (/whatsapp/.test(t) && !profile.contact) profile.contact = { mode: "WhatsApp", valeur: null };
+};
+
+/* ===== ORDRE ET QUESTION SUIVANTE ===== */
+const fieldOrder = ["intervention","objectif","budget","timing","medical","identite","contact","rdv"];
+
 const nextField = (p) => {
-  if (!p.intervention) return "intervention";
-  if (!p.objectif) return "objectif";
-  if (!p.budget) return "budget";
-  if (!p.timing) return "timing";
-  if (!p.medical) return "medical";
-  if (!p.identite) return "identite";
-  if (!p.contact) return "contact";
+  for (const f of fieldOrder) {
+    if (!p[f]) return f;
+  }
   return "rdv";
+};
+
+const COOLDOWN_MS = 15_000;
+const canAsk = (p, field) => {
+  const now = Date.now();
+  if (p.lastAsked === field && now - p.lastAskedAt < COOLDOWN_MS) return false;
+  return true;
+};
+
+const personalize = (field) => {
+  const ack = Math.random() < 0.5 ? pick(ACK) + " " : "";
+  return ack + pick(ASK_TEMPLATES[field]);
+};
+
+const askNext = (conv, userText) => {
+  const p = conv.profile;
+  extractInfo(userText, p);
+  const field = nextField(p);
+  if (!canAsk(p, field)) return null;
+  p.lastAsked = field;
+  p.lastAskedAt = Date.now();
+  return personalize(field);
+};
+
+/* ===== CATÉGORISATION LEAD ===== */
+const leadCategory = (p) => {
+  const bud = p.budget && (p.budget.max || p.budget.approx || p.budget.min);
+  if (bud && (p.timing === "urgent" || p.timing === "1–3 mois")) return "CHAUD";
+  if (!bud || p.timing === "3–12 mois") return "TIEDE";
+  return "FROID";
 };
 
 /* =========================================================
@@ -401,7 +476,7 @@ app.post("/onboarding/complete", async (req, res) => {
 
     client.status = "active";
     client.clinic = clinic_name;
-    client.phone_number_id = normalize(phone_number_id || DEFAULT_PHONE_NUMBER_ID);
+    client.phone_number_id = normalizeS(phone_number_id || DEFAULT_PHONE_NUMBER_ID);
     client.wa_token = wa_token || DEFAULT_WA_TOKEN;
     client.openai_key = openai_key || OPENAI_API_KEY;
     client.prompt = prompt || PROMPT_DEFAULT;
@@ -453,7 +528,7 @@ app.post("/webhook", async (req, res) => {
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0]?.value;
     const msg = change?.messages?.[0];
-    const phoneNumberId = normalize(change?.metadata?.phone_number_id);
+    const phoneNumberId = normalizeS(change?.metadata?.phone_number_id);
     const from = msg?.from;
     let text = msg?.text?.body?.trim() || "";
 
@@ -471,7 +546,7 @@ app.post("/webhook", async (req, res) => {
     }
 
     const db = readDB();
-    // Recherche client + fallback pour ne pas bloquer les tests
+    // Recherche client + fallback pour tests
     let client = (db.clients ?? []).find(
       (c) => c.status === "active" && sameId(c.phone_number_id, phoneNumberId)
     );
@@ -486,7 +561,7 @@ app.post("/webhook", async (req, res) => {
         openai_key: OPENAI_API_KEY,
         prompt: PROMPT_DEFAULT,
       };
-      // Pour éviter le warning à chaque message, dé-commente si tu veux persister :
+      // Option: persister si besoin
       // db.clients.push(client);
       // writeDB(db);
     }
@@ -504,29 +579,24 @@ app.post("/webhook", async (req, res) => {
 
     const sysPrompt = client.prompt || PROMPT_DEFAULT;
 
-    // Variations & profil
-    extractInfo(text, conv.profile);
-    let field = nextField(conv.profile);
-    const now = Date.now();
-    if (conv.profile.lastAsked === field && now - conv.profile.lastAskedAt < 15000) {
-      const order = ["intervention", "objectif", "budget", "timing", "medical", "identite", "contact", "rdv"];
-      field = order[(order.indexOf(field) + 1) % order.length];
-    }
-    conv.profile.lastAsked = field;
-    conv.profile.lastAskedAt = now;
+    // Génère la prochaine question personnalisée
+    const assistantHint = askNext(conv, text);
 
-    const assistantHint = pick(ASK_TEMPLATES[field]);
-
-    // Few-shot anti-répétitions
+    // Few-shot anti-réponse robotique, sans mention "IA"
     const fewShot = [
       { role: "user", content: "Qui es tu ?" },
-      { role: "assistant", content: "Je suis l’assistante IA de la clinique. Je vous aide à qualifier votre demande 😊" },
+      { role: "assistant", content: "Je suis Pamela, l’assistante de la clinique. Je vous accompagne 😊" },
       { role: "user", content: "Je souhaite me renseigner pour une greffe de cheveux" },
       { role: "assistant", content: "Bien noté 😊 Quelles zones vous gênent le plus (golfes, tonsure, ligne frontale) ?" },
     ];
 
     const recent = conv.messages.slice(-6).map((m) => ({ role: m.role, content: m.content }));
-    const messages = [{ role: "system", content: sysPrompt }, ...fewShot, ...recent, { role: "assistant", content: assistantHint }];
+    const messages = [{ role: "system", content: sysPrompt }, ...fewShot, ...recent];
+
+    // Guide le modèle avec un "assistant hint" si disponible
+    if (assistantHint) {
+      messages.push({ role: "assistant", content: assistantHint });
+    }
 
     // Anti “bonjour” vide
     const norm = text.toLowerCase();
@@ -542,7 +612,12 @@ app.post("/webhook", async (req, res) => {
       const r = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { Authorization: `Bearer ${useOpenAI}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-3.5-turbo", temperature: 0.3, max_tokens: 200, messages }),
+        body: JSON.stringify({
+          model: "gpt-3.5-turbo",
+          temperature: 0.3,
+          max_tokens: 200,
+          messages
+        }),
       });
       if (!r.ok) throw new Error(`OpenAI: ${r.status} ${await r.text()}`);
       const result = await r.json();
@@ -640,6 +715,3 @@ process.on("SIGTERM", () => {
 });
 
 export default app;
-
-
-
