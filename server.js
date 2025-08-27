@@ -404,6 +404,28 @@ app.get("/webhook", (req, res) => {
   log.warn("Échec validation webhook", { mode, tokenMatch: token === expectedToken });
   return res.sendStatus(403);
 });
+/* ===== CONVERSATION STATE ===== */
+const ensureConversation = (db, convId, clientId) => {
+  db.conversations ??= {};
+  if (!db.conversations[convId]) {
+    db.conversations[convId] = {
+      messages: [],
+      created_at: new Date().toISOString(),
+      client_id: clientId,
+      profile: {
+        intervention: null,
+        anamneseDone: false,
+        objectif: null,
+        budget: null,
+        timing: null,
+        medical: null,
+        identite: null,
+        contact: null,
+      },
+    };
+  }
+  return db.conversations[convId];
+};
 
 /* =========================================================
  *  WEBHOOK MESSAGES — 100% CHATGPT
@@ -615,4 +637,5 @@ process.on("SIGTERM", () => {
 });
 
 export default app;
+
 
