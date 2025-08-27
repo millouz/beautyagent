@@ -1,4 +1,4 @@
-// server.js — BeautyAgent (version corrigée)
+// server.js — BeautyAgent (version simplifiée 100% ChatGPT)
 
 import express from "express";
 import fetch from "node-fetch";
@@ -136,73 +136,8 @@ Sortie interne (stockée par le système, jamais affichée): {nom, prénom, âge
 `;
 
 /* =========================================================
- *  VARIATIONS & PROFIL
+ *  EXTRACTION + CATEGORISATION
  * =======================================================*/
-const ACK = ["Parfait.", "Très clair.", "Je vous suis.", "Merci pour la précision.", "Je note."];
-
-const ASK_TEMPLATES = {
-  intervention: [
-    "Quel projet esthétique aviez-vous en tête ?",
-    "Vous pensiez à quelle intervention précisément 😊 ?",
-    "Sur quelle intervention souhaitez-vous avancer en priorité ?",
-  ],
-  anamneseDone: [
-    "Avant d’organiser quoi que ce soit, souhaitez-vous que je vous explique le déroulé (durée, convalescence, suivi) ?",
-  ],
-  objectif: [
-    "Quel est l’objectif principal recherché, plutôt esthétique ou correctif ?",
-    "Vous visez quel résultat en priorité, esthétique ou une correction précise ?",
-  ],
-  timing: [
-    "Vous imaginez ça pour quand : urgent, 1–3 mois, 3–12 mois ou plus tard ?",
-    "Côté timing, on est sur urgent, 1–3 mois, 3–12 mois ou plus tard ?",
-  ],
-  budget: [
-    "Avez-vous une fourchette de budget en tête ? Même approximative.",
-    "Quelle enveloppe imaginez-vous pour ce projet ?",
-  ],
-  medical: [
-    "Des éléments de santé à signaler : tabac, allergies, maladies, opérations récentes, traitements en cours ?",
-  ],
-  identite: [
-    "Je complète vos coordonnées pour vous suivre au mieux : votre prénom, nom et âge ?",
-  ],
-  contact: [
-    "On vous recontacte de préférence sur WhatsApp, par appel ou par email ?",
-  ],
-  rdv: [
-    "Souhaitez-vous que je propose un créneau avec le chirurgien ou son assistante, en visio ou sur place 📅 ?",
-  ],
-};
-
-const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
-/* ===== CONVERSATION STATE ===== */
-const ensureConversation = (db, convId, clientId) => {
-  db.conversations ??= {};
-  if (!db.conversations[convId]) {
-    db.conversations[convId] = {
-      messages: [],
-      created_at: new Date().toISOString(),
-      client_id: clientId,
-      profile: {
-        intervention: null,
-        anamneseDone: false,
-        objectif: null,
-        budget: null,            // {min?, max?} | {approx?}
-        timing: null,            // "urgent" | "1–3 mois" | "3–12 mois" | "plus tard"
-        medical: null,
-        identite: null,          // { nom, prenom, age }
-        contact: null,           // { mode, valeur }
-        lastAsked: null,
-        lastAskedAt: 0,
-      },
-    };
-  }
-  return db.conversations[convId];
-};
-
-/* ===== EXTRACTION ROBUSTE ===== */
 const normalize = (s) => (s || "").toLowerCase().normalize("NFKD").replace(/[’']/g,"'");
 const euroToNumber = (s) => {
   if (!s) return null;
@@ -219,7 +154,7 @@ const extractInfo = (text, profile) => {
   const t = normalize(raw);
 
   // Intervention
-  if (/(greffe|implant|fue|rhinoplast|septoplast|lifting|bl[eé]pharo|abdominoplast|liposuc|liposuccion|lipofilling|otoplast|botox|toxine|acide hyal|hyaluronique|peeling|laser|augmentation mammaire|mastopexie|reduction mammaire|réduction mammaire|gynecomastie|gyn[eé]comastie)/.test(t)) {
+  if (/(greffe|implant|fue|rhinoplast|septoplast|lifting|bl[eé]pharo|abdominoplast|liposuc|liposuccion|lipofilling|otoplast|botox|toxine|acide hyal|hyaluronique|peeling|laser|augmentation mammaire|mastopexie|reduction mammaire|réduction mammaire|gynecomastie|gyn[eé]comastie|proth[eè]se mammaire)/.test(t)) {
     profile.intervention ??= raw;
   }
 
@@ -288,56 +223,6 @@ const extractInfo = (text, profile) => {
   if (/whatsapp/.test(t) && !profile.contact) profile.contact = { mode: "WhatsApp", valeur: null };
 };
 
-/* ===== ORDRE ET QUESTION SUIVANTE ===== */
-const fieldOrder = ["intervention","anamneseDone","objectif","timing","budget","medical","identite","contact","rdv"];
-
-const nextField = (p) => {
-  for (const f of fieldOrder) {
-    if (!p[f]) return f;
-  }
-  return "rdv";
-};
-
-const COOLDOWN_MS = 15_000;
-const canAsk = (p, field) => {
-  const now = Date.now();
-  if (p.lastAsked === field && now - p.lastAskedAt < COOLDOWN_MS) return false;
-  return true;
-};
-
-const personalize = (field) => {
-  const ack = Math.random() < 0.5 ? pick(ACK) + " " : "";
-  return ack + pick(ASK_TEMPLATES[field]);
-};
-
-const askNext = (conv, userText) => {
-  const p = conv.profile;
-  extractInfo(userText, p);
-
-  // Ne pas avancer sans intervention explicite
-  if (!p.intervention) {
-    if (!canAsk(p, "intervention")) return null;
-    p.lastAsked = "intervention";
-    p.lastAskedAt = Date.now();
-    return pick(ASK_TEMPLATES.intervention);
-  }
-
-  // Proposer l’anamnèse avant la qualification
-  if (!p.anamneseDone) {
-    if (!canAsk(p, "anamneseDone")) return null;
-    p.lastAsked = "anamneseDone";
-    p.lastAskedAt = Date.now();
-    return pick(ASK_TEMPLATES.anamneseDone);
-  }
-
-  const field = nextField(p);
-  if (!canAsk(p, field)) return null;
-  p.lastAsked = field;
-  p.lastAskedAt = Date.now();
-  return personalize(field);
-};
-
-/* ===== CATÉGORISATION LEAD ===== */
 const leadCategory = (p) => {
   const bud = p.budget && (p.budget.max || p.budget.approx || p.budget.min);
   if (bud && (p.timing === "urgent" || p.timing === "1–3 mois")) return "CHAUD";
@@ -350,10 +235,8 @@ const sanitizeReply = (s = "") => {
   const marker =
     /(📋|^)\s*fiche\s*lead|^nom\s*:|^pr[ée]nom\s*:|^budget\s*:|^timing\s*:|^infos?\s*m[ée]dicales?\s*:|^contact\s*:/im;
   if (!marker.test(s)) return s;
-  // supprime tout bloc structuré à partir des marqueurs
   s = s.replace(/(?:📋[\s\S]*$)/i, "");
   s = s.replace(/^.*?(nom\s*:|pr[ée]nom\s*:|budget\s*:|timing\s*:|infos?\s*m[ée]dicales?\s*:|contact\s*:)[\s\S]*$/im, "");
-  // fallback humain
   return "Merci, je garde vos informations en interne. Préférez-vous que je réponde d’abord à vos questions, ou que je regarde des disponibilités 📅 ?";
 };
 
@@ -522,7 +405,7 @@ app.get("/webhook", (req, res) => {
 });
 
 /* =========================================================
- *  WEBHOOK MESSAGES
+ *  WEBHOOK MESSAGES — 100% CHATGPT
  * =======================================================*/
 app.post("/webhook", async (req, res) => {
   const startTime = Date.now();
@@ -534,15 +417,10 @@ app.post("/webhook", async (req, res) => {
     const msg = change?.messages?.[0];
     const phoneNumberId = normalizeS(change?.metadata?.phone_number_id);
     const from = msg?.from;
-    let text = msg?.text?.body?.trim() || "";
+    const text = (msg?.text?.body || "").trim();
 
     conversationId = `${phoneNumberId}_${from}`;
-    log.debug("Message WhatsApp reçu", {
-      phoneNumberId,
-      from,
-      textLength: text.length,
-      conversationId,
-    });
+    log.debug("Message WhatsApp reçu", { phoneNumberId, from, textLength: text.length, conversationId });
 
     if (!from || !text || !phoneNumberId) {
       log.warn("Message incomplet", { from: !!from, text: !!text, phoneNumberId: !!phoneNumberId });
@@ -550,22 +428,17 @@ app.post("/webhook", async (req, res) => {
     }
 
     const db = readDB();
-    // Recherche client + fallback pour tests
+    // client actif sinon fallback
     let client = (db.clients ?? []).find(
       (c) => c.status === "active" && sameId(c.phone_number_id, phoneNumberId)
-    );
-
-    if (!client) {
-      log.warn("Client non trouvé ou inactif", { phoneNumberId });
-      client = {
-        id: "fallback",
-        status: "active",
-        phone_number_id: phoneNumberId,
-        wa_token: DEFAULT_WA_TOKEN,
-        openai_key: OPENAI_API_KEY,
-        prompt: PROMPT_DEFAULT,
-      };
-    }
+    ) || {
+      id: "fallback",
+      status: "active",
+      phone_number_id: phoneNumberId,
+      wa_token: DEFAULT_WA_TOKEN,
+      openai_key: OPENAI_API_KEY,
+      prompt: PROMPT_DEFAULT,
+    };
 
     const useToken = (client.wa_token || DEFAULT_WA_TOKEN || "").replace(/\s/g, "");
     const useOpenAI = (client.openai_key || OPENAI_API_KEY || "").trim();
@@ -576,27 +449,13 @@ app.post("/webhook", async (req, res) => {
 
     const conv = ensureConversation(db, conversationId, client.id);
     conv.messages.push({ role: "user", content: text, timestamp: new Date().toISOString() });
-    if (conv.messages.length > 20) conv.messages = conv.messages.slice(-10);
+    if (conv.messages.length > 40) conv.messages = conv.messages.slice(-20);
 
-    // Anti “bonjour” : réponse immédiate sans OpenAI
-    if (/^\s*(bonjour|salut|hello)\s*$/i.test(text.toLowerCase())) {
-      const quick = "Bonjour 😊 Quel projet esthétique aviez-vous en tête ?";
-      await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${useToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ messaging_product: "whatsapp", to: from, type: "text", text: { body: quick } }),
-      });
-      conv.messages.push({ role: "assistant", content: quick, timestamp: new Date().toISOString() });
-      conv.updated_at = new Date().toISOString();
-      writeDB(db);
-      return res.sendStatus(200);
-    }
+    // MAJ fiche interne
+    conv.profile ??= { anamneseDone: false };
+    extractInfo(text, conv.profile);
 
-    const assistantHint = askNext(conv, text);
-
-    const recent = conv.messages.slice(-6).map((m) => ({ role: m.role, content: m.content }));
-
-    // Garde-fou dynamique
+    const recent = conv.messages.slice(-12).map(m => ({ role: m.role, content: m.content }));
     const dynamicGuard = [
       "Ne pas avancer si le prospect n’a pas précisé son projet.",
       conv.profile.intervention
@@ -604,8 +463,10 @@ app.post("/webhook", async (req, res) => {
         : "Aucune intervention encore. Demander le projet sans le deviner."
     ].join("\n");
 
-    const messages = [{ role: "system", content: (client.prompt || PROMPT_DEFAULT) + "\n\n" + dynamicGuard }, ...recent];
-    if (assistantHint) messages.push({ role: "assistant", content: assistantHint });
+    const messages = [
+      { role: "system", content: (client.prompt || PROMPT_DEFAULT) + "\n\n" + dynamicGuard },
+      ...recent
+    ];
 
     let reply = "Merci pour votre message, je reviens vers vous rapidement.";
     try {
@@ -636,7 +497,12 @@ app.post("/webhook", async (req, res) => {
     const waResponse = await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${useToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", to: from, type: "text", text: { body: reply } }),
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: from,
+        type: "text",
+        text: { body: reply }
+      }),
     });
     if (!waResponse.ok) {
       const errorText = await waResponse.text();
@@ -649,6 +515,38 @@ app.post("/webhook", async (req, res) => {
   }
 
   res.sendStatus(200);
+});
+
+/* =========================================================
+ *  API LEADS
+ * =======================================================*/
+app.get("/leads", (req, res) => {
+  try {
+    const db = readDB();
+    const leads = Object.entries(db.conversations || {}).map(([convId, conv]) => {
+      const p = conv.profile || {};
+      return {
+        conversation_id: convId,
+        created_at: conv.created_at,
+        updated_at: conv.updated_at,
+        nom: p.identite?.nom || null,
+        prenom: p.identite?.prenom || null,
+        age: p.identite?.age || null,
+        intervention: p.intervention || null,
+        objectif: p.objectif || null,
+        budget: p.budget || null,
+        timing: p.timing || null,
+        infos_medicales: p.medical || null,
+        contact: p.contact || null,
+        categorie: leadCategory(p),
+        commentaires: (conv.messages || []).slice(-3).map(m => m.content).join(" | ")
+      };
+    });
+    res.json(leads);
+  } catch (error) {
+    log.error("Erreur récupération leads", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 });
 
 /* =========================================================
@@ -681,37 +579,6 @@ app.get("/stats", (req, res) => {
     res.json(stats);
   } catch (error) {
     log.error("Erreur stats", error);
-    res.status(500).json({ error: "Erreur serveur" });
-  }
-});
-/* =========================================================
- *  API LEADS
- * =======================================================*/
-app.get("/leads", (req, res) => {
-  try {
-    const db = readDB();
-    const leads = Object.entries(db.conversations || {}).map(([convId, conv]) => {
-      const p = conv.profile || {};
-      return {
-        conversation_id: convId,
-        created_at: conv.created_at,
-        updated_at: conv.updated_at,
-        nom: p.identite?.nom || null,
-        prenom: p.identite?.prenom || null,
-        age: p.identite?.age || null,
-        intervention: p.intervention || null,
-        objectif: p.objectif || null,
-        budget: p.budget || null,
-        timing: p.timing || null,
-        infos_medicales: p.medical || null,
-        contact: p.contact || null,
-        categorie: leadCategory(p),
-        commentaires: conv.messages.slice(-3).map(m => m.content).join(" | ") // ex: derniers messages utiles
-      };
-    });
-    res.json(leads);
-  } catch (error) {
-    log.error("Erreur récupération leads", error);
     res.status(500).json({ error: "Erreur serveur" });
   }
 });
