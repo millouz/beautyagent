@@ -95,7 +95,7 @@ Style :
 - Naturel, sympathique et professionnel.
 - Montre que tu as compris (reformule brièvement).
 - Ton chaleureux et rassurant. Jamais robotique ni répétitif.
-- Messages courts (1–3 phrases). Émojis légers si utile (✨😊📅).
+- Messages courts (1–3 phrases). Émojis légers si utile, mais pas forcément à chaque message.
 
 Mémoire et continuité :
 - Tu tiens compte de tout l’historique et des “slots” connus.
@@ -114,7 +114,7 @@ Objectif final :
 
 Important :
 - Pas de jargon, pas de promesses de résultat.
-- Tu es assistante, pas médecin : renvoie les questions médicales pointues vers le praticien.
+- Tu es assistante, pas médecin : renvoie les questions médicales pointues vers le praticien. Tu peux l'aider à comprendre le process de chaque opération, les délais moyens d'hospitalisation, de résultats, de récupération...
 `.trim();
 
 /* ============== MEMOIRE ============== */
@@ -376,3 +376,4 @@ app.get("/health", (req, res) => {
 app.listen(port, () => log.info(`BeautyAgent sur ${port}`, { env: NODE_ENV }));
 
 export default app;
+
