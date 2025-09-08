@@ -55,11 +55,9 @@ function ensureDBShape(db) {
   db.processed ??= {};
   return db;
 }
-
 const readDB = () => {
   try {
-    const d = ensureDBShape(JSON.parse(fs.readFileSync(DB_PATH, "utf8")));
-    return d;
+    return ensureDBShape(JSON.parse(fs.readFileSync(DB_PATH, "utf8")));
   } catch (e) {
     log.error("DB read", e);
     return ensureDBShape({ clients: [], conversations: {}, processed: {} });
@@ -78,9 +76,7 @@ const sameId = (a, b) => norm(a) === norm(b);
 function pruneProcessed(db) {
   const now = Date.now();
   const TTL = 24 * 60 * 60 * 1000;
-  for (const [k, v] of Object.entries(db.processed)) {
-    if (now - v > TTL) delete db.processed[k];
-  }
+  for (const [k, v] of Object.entries(db.processed)) if (now - v > TTL) delete db.processed[k];
 }
 function alreadyHandled(db, messageId) {
   if (!messageId) return false;
@@ -90,20 +86,35 @@ function alreadyHandled(db, messageId) {
   return false;
 }
 
-/* ============== PROMPTS PERSONA ============== */
+/* ============== PROMPT PERSONA (OpenAI génère tout) ============== */
 const BASE_PROMPT = `
-Tu es **Beautyagent**, assistante de clinique esthétique ultra compétente.
-Objectif: guider, qualifier et rassurer le patient, puis proposer la meilleure prochaine étape (prise d'info, RDV, envoi doc).
-Style: chaleureux, professionnel, concis; 1–2 phrases; pas de jargon ni de promesses; émojis légers si utile (✨📅).
-Méthode:
-1) Accuse réception en reformulant brièvement l'info clé.
-2) Donne la réponse utile en tenant compte de la mémoire (ne repose jamais une info déjà fournie).
-3) Termine par **une seule** question pertinente pour avancer (slot manquant).
-Mémoire: tu DOIS tenir compte de tout l'historique du chat et des slots connus.
-Politesse: “Bonjour” une seule fois par conversation.
-Ne promets jamais de résultat clinique. Renvoie les questions médicales précises vers le praticien.
-Slots à remplir: {intervention}, {objectif}, {budget}, {delai}, {nom}, {contact_pref}, {antecedents}.
-Si l’utilisateur demande tarifs/processus et {intervention} est connu → réponds pour **cette intervention**.
+Tu es Beautyagent, l’assistante humaine d’une clinique de chirurgie et de médecine esthétique.
+Rôle : accueillir le patient avec chaleur, l’écouter, le rassurer, et recueillir progressivement les informations nécessaires pour organiser sa prise en charge.
+
+Style :
+- Naturel, sympathique et professionnel.
+- Montre que tu as compris (reformule brièvement).
+- Ton chaleureux et rassurant. Jamais robotique ni répétitif.
+- Messages courts (1–3 phrases). Émojis légers si utile (✨😊📅).
+
+Mémoire et continuité :
+- Tu tiens compte de tout l’historique et des “slots” connus.
+- Ne repose jamais une question déjà traitée.
+- Si on te demande “Que savez-vous de moi ?”, résume ce que tu sais (intervention, objectif, budget, délai, nom, contact…).
+- “Bonjour” une seule fois par conversation.
+
+Méthode :
+1) Reconnais ce que dit le patient.
+2) Réponds de façon claire et professionnelle, sans entrer dans la technique médicale.
+3) Termine par **une seule** question naturelle qui fait avancer la discussion.
+
+Objectif final :
+- Déterminer intervention, objectif, budget, délai, identité et contact préféré.
+- Proposer ensuite un rendez-vous avec le chirurgien ou l’assistante.
+
+Important :
+- Pas de jargon, pas de promesses de résultat.
+- Tu es assistante, pas médecin : renvoie les questions médicales pointues vers le praticien.
 `.trim();
 
 /* ============== MEMOIRE ============== */
@@ -148,7 +159,7 @@ const slotsLine = (s) =>
     .filter(Boolean)
     .join(" | ");
 
-/* ============== OPENAI CALL ============== */
+/* ============== OPENAI CALLS ============== */
 async function chatCompletes(apiKey, messages, maxTokens = 350) {
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -157,7 +168,7 @@ async function chatCompletes(apiKey, messages, maxTokens = 350) {
   });
   const j = await r.json();
   if (j.error) throw j.error;
-  return j.choices?.[0]?.message?.content || "Merci pour votre message.";
+  return j.choices?.[0]?.message?.content ?? "";
 }
 
 /* ============== STRIPE ============== */
@@ -244,25 +255,20 @@ app.post("/webhook", async (req, res) => {
     const entry = req.body?.entry?.[0];
     const change = entry?.changes?.[0]?.value;
 
-    // traiter seulement les events "messages" texte
+    // ne traiter que les messages texte
     const msg = Array.isArray(change?.messages) ? change.messages[0] : null;
-    if (!msg) return res.sendStatus(200);
-    if (msg.type !== "text" || !msg.text?.body) return res.sendStatus(200);
+    if (!msg || msg.type !== "text" || !msg.text?.body) return res.sendStatus(200);
 
     const phoneNumberId = norm(change?.metadata?.phone_number_id);
     const from = msg.from;
     const text = msg.text.body.trim();
     const messageId = msg.id;
 
-    if (!from || !text || !phoneNumberId) {
-      log.warn("message incomplet", { from: !!from, text: !!text, phoneNumberId: !!phoneNumberId });
-      return res.sendStatus(200);
-    }
+    if (!from || !text || !phoneNumberId) return res.sendStatus(200);
 
     const db = readDB();
     if (alreadyHandled(db, messageId)) {
       writeDB(db);
-      log.info("Doublon ignoré", { messageId });
       return res.sendStatus(200);
     }
 
@@ -292,68 +298,50 @@ app.post("/webhook", async (req, res) => {
       client.prompt || BASE_PROMPT,
       `\nSlots connus: ${slotsLine(conv.slots) || "aucun"}`,
       conv.summary ? `Résumé: ${conv.summary}` : "Résumé: aucun",
-      "Consignes finales: ne répète pas d'infos déjà données. Une seule question pour avancer. Bonjour une seule fois.",
+      "Consignes finales: pas de répétitions, une seule question, Bonjour une seule fois.",
     ].join("\n");
 
     // historique utile
     const historyMsgs = conv.history.map((m) => ({ role: m.role, content: m.content }));
-
     const effectiveUserText =
       isGreeting && conv.greeted
-        ? "L'utilisateur a redit bonjour. Réponds brièvement puis poursuis la qualification sans resaluer."
+        ? "L'utilisateur a redit bonjour. Réponds brièvement puis poursuis naturellement sans resaluer."
         : text;
 
-    // appel modèle
+    // OpenAI génère TOUT
     push(conv, "user", text);
-    let reply = "Merci pour votre message.";
+    let reply = "";
     try {
-      const r = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${useOpenAI}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          temperature: 0.3,
-          max_tokens: 320,
-          messages: [{ role: "system", content: dynamicSystem }, ...historyMsgs, { role: "user", content: effectiveUserText }],
-        }),
-      });
-      const j = await r.json();
-      reply = j?.choices?.[0]?.message?.content || reply;
+      reply = await chatCompletes(useOpenAI, [
+        { role: "system", content: dynamicSystem },
+        ...historyMsgs,
+        { role: "user", content: effectiveUserText },
+      ], 320);
     } catch (e) {
       log.error("OpenAI chat", e);
+      // Pas de fallback texte. On n'envoie rien au patient si échec modèle.
+      writeDB(db);
+      return res.sendStatus(200);
     }
 
-    // enforcement léger: max 3 phrases, dernière interrogative si possible
-    function enforceStructure(out) {
-      const sentences = out
-        .split(/\n+/)
-        .join(" ")
-        .split(/(?<=[.?!])\s+/)
-        .filter(Boolean)
-        .slice(0, 3);
-      return sentences.join(" ");
+    if (!reply) {
+      writeDB(db);
+      return res.sendStatus(200); // rien à envoyer si le modèle n'a rien renvoyé
     }
-    reply = enforceStructure(reply);
 
     push(conv, "assistant", reply);
 
-    // résumé court pour les tours suivants
+    // résumé court pour les tours suivants (toujours généré par OpenAI)
     try {
-      const sumRes = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${useOpenAI}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-4o-mini",
-          temperature: 0.2,
-          max_tokens: 120,
-          messages: [
-            { role: "system", content: "Résume en 2 phrases max les infos déjà obtenues (slots + points clés). Français." },
-            { role: "user", content: JSON.stringify({ slots: conv.slots, lastTurns: conv.history.slice(-8) }) },
-          ],
-        }),
-      });
-      const sumJson = await sumRes.json();
-      conv.summary = sumJson?.choices?.[0]?.message?.content || conv.summary || "";
+      const sum = await chatCompletes(
+        useOpenAI,
+        [
+          { role: "system", content: "Résume en 2 phrases max les infos utiles déjà obtenues (slots + points clés). Français." },
+          { role: "user", content: JSON.stringify({ slots: conv.slots, lastTurns: conv.history.slice(-8) }) },
+        ],
+        120
+      );
+      if (sum) conv.summary = sum;
     } catch (_) {}
 
     db.conversations[conversationId] = conv;
