@@ -1,4 +1,3 @@
-// server.js (ESM)
 import 'dotenv/config';
 import express from 'express';
 import fetch from 'node-fetch';
@@ -25,7 +24,6 @@ const need = [
   'STRIPE_SECRET',
   'STRIPE_PRICE_ID',
   'STRIPE_WEBHOOK_SECRET',
-  // nécessaires pour le fallback bot (peuvent être surchargés par onboarding)
   'OPENAI_API_KEY',
   'DEFAULT_WA_TOKEN',
 ];
@@ -45,20 +43,20 @@ const {
   DEFAULT_WA_TOKEN,
   DEFAULT_PHONE_NUMBER_ID = '',
   NODE_ENV = 'production',
+  DB_PATH: DB_PATH_ENV = '/tmp/db.json',
 } = process.env;
 
 const stripe = new Stripe(STRIPE_SECRET, { apiVersion: '2024-06-20' });
 const port = Number(PORT);
 
 /* ============== DB JSON ============== */
-const DB_PATH = path.resolve('./db.json');
+const DB_PATH = path.resolve(DB_PATH_ENV);
 if (!fs.existsSync(DB_PATH)) {
   fs.writeFileSync(
     DB_PATH,
     JSON.stringify({ clients: [], conversations: {}, processed: {} }, null, 2),
   );
 }
-
 function ensureDBShape(db) {
   db.clients ??= [];
   db.conversations ??= {};
@@ -86,9 +84,7 @@ const sameId = (a, b) => norm(a) === norm(b);
 function pruneProcessed(db) {
   const now = Date.now();
   const TTL = 24 * 60 * 60 * 1000;
-  for (const [k, v] of Object.entries(db.processed)) {
-    if (now - v > TTL) delete db.processed[k];
-  }
+  for (const [k, v] of Object.entries(db.processed)) if (now - v > TTL) delete db.processed[k];
 }
 function alreadyHandled(db, messageId) {
   if (!messageId) return false;
@@ -108,7 +104,7 @@ Style :
 - Zéro répétition. Pas de jargon. Émojis discrets si utiles (🙂📅).
 
 Mémoire :
-- Tu tiens compte de l’historique. Ne repose pas une question déjà traitée.
+- Tiens compte de l’historique. Ne repose pas une question déjà traitée.
 - “Bonjour” une seule fois par conversation.
 
 Méthode :
@@ -158,9 +154,7 @@ function extractSlots(slots, text) {
   if (mInterv && !slots.intervention) slots.intervention = mInterv[1];
   const mBudget = t.match(/(\d[\d\s]{2,})\s*€?/);
   if (mBudget && !slots.budget) slots.budget = mBudget[1].replace(/\s/g, '');
-  const mDelai = t.match(
-    /(\d+\s*(jours?|semaines?|mois?)|urgent|dès que possible|1-3 mois|3-12 mois)/,
-  );
+  const mDelai = t.match(/(\d+\s*(jours?|semaines?|mois?)|urgent|dès que possible|1-3 mois|3-12 mois)/);
   if (mDelai && !slots.delai) slots.delai = mDelai[1];
   const mNom = text.match(/je m'?appelle\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,30})/i);
   if (mNom && !slots.nom) slots.nom = mNom[1].trim();
@@ -208,7 +202,6 @@ app.post('/checkout/create', async (req, res) => {
         'https://app.beautyagent.ai/onboarding?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: 'https://beautyagent-ai-glow.lovable.app/#tarifs',
       customer_email: email,
-      // Stripe gère l’expiration automatiquement; pas nécessaire mais toléré
     });
     res.json({ url: session.url, session_id: session.id });
   } catch (e) {
@@ -348,7 +341,7 @@ app.post('/webhook', async (req, res) => {
     } catch (e) {
       log.error('OpenAI chat', e);
       writeDB(db);
-      return res.sendStatus(200); // ne pas bloquer le webhook Meta
+      return res.sendStatus(200);
     }
 
     if (!reply) {
@@ -358,7 +351,7 @@ app.post('/webhook', async (req, res) => {
 
     push(conv, 'assistant', reply);
 
-    // Résumé court (2 phrases max) pour contexte futur
+    // Résumé court pour tours suivants
     try {
       const sum = await chatCompletes(
         useOpenAI,
@@ -373,14 +366,12 @@ app.post('/webhook', async (req, res) => {
         120,
       );
       if (sum) conv.summary = sum;
-    } catch (_) {
-      // ignorer
-    }
+    } catch (_) {}
 
     db.conversations[conversationId] = conv;
     writeDB(db);
 
-    // envoi WhatsApp (Meta Graph v20)
+    // Envoi WhatsApp (Meta Graph v20)
     const resp = await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${useToken}`, 'Content-Type': 'application/json' },
@@ -388,10 +379,9 @@ app.post('/webhook', async (req, res) => {
         messaging_product: 'whatsapp',
         to: from,
         type: 'text',
-        text: { body: reply.slice(0, 4096) }, // limite de sécurité
+        text: { body: reply.slice(0, 4096) },
       }),
     });
-
     if (!resp.ok) {
       const t = await resp.text().catch(() => '');
       log.error('WA send error', { status: resp.status, body: t });
@@ -414,6 +404,7 @@ app.get('/health', (req, res) => {
     conversations: Object.keys(db.conversations || {}).length,
     processed: Object.keys(db.processed || {}).length,
     env: NODE_ENV,
+    db_path: DB_PATH,
   });
 });
 
