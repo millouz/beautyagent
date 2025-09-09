@@ -15,18 +15,12 @@ const log = {
 };
 
 /* ============== MIDDLEWARE ============== */
-app.use('/stripe-webhook', express.raw({ type: 'application/json' })); // Stripe exige raw
+app.use('/stripe-webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 /* ============== ENV ============== */
-const need = [
-  'STRIPE_SECRET',
-  'STRIPE_PRICE_ID',
-  'STRIPE_WEBHOOK_SECRET',
-  'OPENAI_API_KEY',
-  'DEFAULT_WA_TOKEN',
-];
+const need = ['STRIPE_SECRET', 'STRIPE_PRICE_ID', 'STRIPE_WEBHOOK_SECRET', 'OPENAI_API_KEY', 'DEFAULT_WA_TOKEN'];
 const miss = need.filter((v) => !process.env[v]);
 if (miss.length) {
   log.error(`ENV manquantes: ${miss.join(', ')}`);
@@ -52,10 +46,7 @@ const port = Number(PORT);
 /* ============== DB JSON ============== */
 const DB_PATH = path.resolve(DB_PATH_ENV);
 if (!fs.existsSync(DB_PATH)) {
-  fs.writeFileSync(
-    DB_PATH,
-    JSON.stringify({ clients: [], conversations: {}, processed: {} }, null, 2),
-  );
+  fs.writeFileSync(DB_PATH, JSON.stringify({ clients: [], conversations: {}, processed: {} }, null, 2));
 }
 function ensureDBShape(db) {
   db.clients ??= [];
@@ -86,10 +77,10 @@ function pruneProcessed(db) {
   const TTL = 24 * 60 * 60 * 1000;
   for (const [k, v] of Object.entries(db.processed)) if (now - v > TTL) delete db.processed[k];
 }
-function alreadyHandled(db, messageId) {
-  if (!messageId) return false;
-  if (db.processed[messageId]) return true;
-  db.processed[messageId] = Date.now();
+function alreadyHandled(db, dedupeKey) {
+  if (!dedupeKey) return false;
+  if (db.processed[dedupeKey]) return true;
+  db.processed[dedupeKey] = Date.now();
   pruneProcessed(db);
   return false;
 }
@@ -129,8 +120,8 @@ Relecture obligatoire avant envoi :
 `.trim();
 
 /* ============== MEMOIRE ============== */
-const MAX_TURNS = 24; // 12 allers-retours
-const TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const MAX_TURNS = 24;
+const TTL_MS = 6 * 60 * 60 * 1000;
 
 function getConv(db, id) {
   const now = Date.now();
@@ -175,12 +166,7 @@ async function chatCompletes(apiKey, messages, maxTokens = 350) {
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      temperature: 0.3,
-      max_tokens: maxTokens,
-      messages,
-    }),
+    body: JSON.stringify({ model: 'gpt-4o-mini', temperature: 0.3, max_tokens: maxTokens, messages }),
   });
   if (!r.ok) {
     const t = await r.text().catch(() => '');
@@ -198,8 +184,7 @@ app.post('/checkout/create', async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       line_items: [{ price: STRIPE_PRICE_ID, quantity: 1 }],
-      success_url:
-        'https://app.beautyagent.ai/onboarding?session_id={CHECKOUT_SESSION_ID}',
+      success_url: 'https://app.beautyagent.ai/onboarding?session_id={CHECKOUT_SESSION_ID}',
       cancel_url: 'https://beautyagent-ai-glow.lovable.app/#tarifs',
       customer_email: email,
     });
@@ -242,8 +227,7 @@ app.post('/stripe-webhook', (req, res) => {
 /* ============== ONBOARDING ============== */
 app.post('/onboarding/complete', (req, res) => {
   try {
-    const { session_id, clinic_name, phone_number_id, wa_token, openai_key, prompt } =
-      req.body || {};
+    const { session_id, clinic_name, phone_number_id, wa_token, openai_key, prompt } = req.body || {};
     const db = readDB();
     const c = db.clients.find((x) => x.id === session_id);
     if (!c) return res.status(404).json({ error: 'session not found' });
@@ -289,15 +273,18 @@ app.post('/webhook', async (req, res) => {
 
     if (!from || !text || !phoneNumberId) return res.sendStatus(200);
 
+    // Log d’entrée
+    log.info('Incoming msg', { messageId, from, text });
+
+    const dedupeKey = `${messageId}:${from}`;
     const db = readDB();
-    if (alreadyHandled(db, messageId)) {
+    if (alreadyHandled(db, dedupeKey)) {
       writeDB(db);
       return res.sendStatus(200);
     }
 
     const client =
-      db.clients.find((c) => c.status === 'active' && sameId(c.phone_number_id, phoneNumberId)) ||
-      {
+      db.clients.find((c) => c.status === 'active' && sameId(c.phone_number_id, phoneNumberId)) || {
         id: 'fallback',
         status: 'active',
         phone_number_id: phoneNumberId,
@@ -329,7 +316,8 @@ app.post('/webhook', async (req, res) => {
         ? "L'utilisateur a redit bonjour. Réponds brièvement puis poursuis naturellement sans resaluer."
         : text;
 
-    push(conv, 'user', text);
+    // push du message utilisateur UNE SEULE FOIS
+    push(conv, 'user', effectiveUserText);
 
     let reply = '';
     try {
@@ -351,7 +339,7 @@ app.post('/webhook', async (req, res) => {
 
     push(conv, 'assistant', reply);
 
-    // Résumé court pour tours suivants
+    // Résumé court
     try {
       const sum = await chatCompletes(
         useOpenAI,
@@ -371,7 +359,7 @@ app.post('/webhook', async (req, res) => {
     db.conversations[conversationId] = conv;
     writeDB(db);
 
-    // Envoi WhatsApp (Meta Graph v20)
+    // Envoi WhatsApp
     const resp = await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${useToken}`, 'Content-Type': 'application/json' },
