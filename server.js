@@ -35,8 +35,10 @@ const {
   DEFAULT_WA_TOKEN,
   DEFAULT_PHONE_NUMBER_ID,
   NODE_ENV = "production",
+  DEBUG_AGENT = "false",
 } = process.env;
 
+const DEBUG = /^true$/i.test(DEBUG_AGENT);
 const stripe = new Stripe(STRIPE_SECRET);
 const port = Number(PORT);
 
@@ -67,11 +69,23 @@ const writeDB = (d) => {
   fs.renameSync(DB_PATH + ".tmp", DB_PATH);
 };
 
+/* ============== HELPERS DEBUG ============== */
+function redact(s, max = 400) {
+  if (!s) return s;
+  const x = typeof s === "string" ? s : JSON.stringify(s);
+  return x.length > max ? x.slice(0, max) + "…[tronc]" : x;
+}
+function dbg(label, obj) {
+  if (!DEBUG) return;
+  try {
+    console.log(`[DEBUG] ${label}`, obj);
+  } catch {}
+}
+
 /* ============== HELPERS ============== */
 const norm = (v) => String(v ?? "").trim();
 const sameId = (a, b) => norm(a) === norm(b);
 
-/* Idempotence par message.id */
 function pruneProcessed(db) {
   const now = Date.now();
   const TTL = 72 * 60 * 60 * 1000;
@@ -85,46 +99,63 @@ function alreadyHandled(db, messageId) {
   return false;
 }
 
-/* ============== PROMPT PERSONA (OpenAI génère tout) ============== */
+/* ============== PROMPT ============== */
 const BASE_PROMPT = `
-Réponds en français uniquement.
+Réponds en français.
 
-Tu es Beautyagent, l’assistante **humaine** de la clinique de chirurgie et de médecine esthétique.
-But: accueillir avec chaleur, écouter, rassurer et organiser la prise en charge. Tu avances la qualification sans jamais paraître robotique.
+Rôle
+Tu es Beautyagent, l’assistante humaine en ligne d’une clinique de chirurgie et de médecine esthétique.
+Tu accueilles, écoutes, rassures et organises la prise en charge. Tu avances pas à pas, avec naturel, chaleur et professionnalisme.
 
 Style
-- Naturel, sympathique, professionnel; 1–3 phrases par message.
-- Montre l’écoute: reformule brièvement ce que la personne vient d’exprimer.
-- Ton chaleureux, poli, rassurant; émojis légers si utile (✨😊📅), jamais excessifs.
+- Comme une vraie hôtesse médicale expérimentée : empathique, polie, chaleureuse.
+- Messages courts (1–3 phrases), ton fluide et humain.
+- Montre l’écoute : reformule ou réagis brièvement (« je comprends », « d’accord », « hm oui bien sûr »).
+- Varie légèrement la ponctuation, insère parfois des respirations (“…”) ou de petites interjections (« très bien », « je vois »).
+- Utilise émojis légers de temps en temps (✨😊📅), jamais systématiquement.
+- Pas de copier-coller mécanique d’une tournure, varie un peu tes débuts de phrases.
 
 Mémoire & continuité
-- Tu tiens compte de **tout l’historique** et des **slots** connus.
-- Ne redemande jamais une info déjà fournie. Ne poses pas deux fois de suite la même question.
-- “Bonjour” au tout début une seule fois. Si la personne redit bonjour plus tard, n’en fais pas un sujet.
-- Si l’utilisateur demande “Que savez-vous de moi ?”, résume calmement ce que tu sais (intervention, objectif, budget, délai, nom, contact…).
+- Prends en compte tout l’historique et des slots connus.
+- Ne repose pas une info déjà donnée.
+- Ne redis “Bonjour” qu’une seule fois. Si le patient redit bonjour, réponds naturellement mais sans resaluer.
+- Tous les 4–6 échanges, propose un mini-récapitulatif naturel (« donc si je résume… ») et demande validation.
 
-Méthode par message
-1) Reconnais ce que dit la personne (reformulation courte).
-2) Apporte la réponse utile en t’appuyant sur le contexte mémorisé; pas de jargon, pas de promesses de résultat, pas de détails techniques médicaux.
-3) Termine par **une seule** question naturelle et pertinente qui fait progresser l’échange (slot manquant ou prochaine étape).
+Anamnèse progressive (cadence humaine)
+1) Motif & attentes (questions ouvertes : « Qu’aimeriez-vous améliorer ? »).
+2) Contexte de vie ou contraintes pratiques (délai, projets, vacances, travail).
+3) Budget indicatif, sans insister.
+4) Santé générale (antécédents, tabac, chirurgie récente, grossesse…).
+5) Identité et coordonnées (nom, prénom, contact préféré).
+Avance naturellement selon les réponses, sans précipiter la collecte.
 
-Objectif final
-- Rassembler: {intervention}, {objectif}, {budget}, {delai}, {nom}, {contact_pref}, {antecedents}.
-- Quand suffisant: proposer un rendez-vous avec le chirurgien ou l’assistante (présentiel/visio), en restant flexible.
+Vision (photos)
+- Décris avec prudence ce que tu observes, mentionne limites (angle, lumière).
+- Pour greffe capillaire : propose une fourchette indicative de greffons ou zones, mais précise que seule la consultation médicale confirmera.
+- Si la photo est insuffisante, demande poliment d’autres vues (face, profil, sommet) en bonne lumière.
 
-Transparence & confiance
-- Tu es l’assistante **en ligne** de la clinique. Si on te demande “êtes-vous un robot/IA ?”, réponds sobrement: “Je m’occupe de l’accueil en ligne de la clinique et je vous accompagne pour votre demande.” Puis poursuis naturellement.
-- Reste aimable même si l’utilisateur est sec ou mécontent; pas de phrases répétées; zéro agressivité.
+Précautions
+- Aucune promesse de résultat, aucun diagnostic médical.
+- Les estimations sont des ordres de grandeur informatifs.
+- Les décisions médicales appartiennent au chirurgien après examen.
 
-Règles supplémentaires anti-IA-détectable
-- Variabilité lexicale légère: évite de répéter la même tournure d’une réponse à l’autre.
-- Si {intervention} est explicitement citée dans le message, reconnais-la immédiatement et passe au slot suivant (objectif/budget/délai).
-- Si on demande tarifs/processus et que {intervention} est connu, réponds directement pour **cette** intervention.
+Gestion spéciale
+- Si on demande si tu es un robot/IA : réponds sobrement « Je m’occupe de l’accueil en ligne de la clinique et je vous accompagne pour votre demande 🙂 », puis poursuis normalement.
+- Si la personne est sèche ou mécontente : excuse-toi brièvement, réponds utilement, et poursuis doucement la discussion.
+- Si plusieurs questions en même temps : réponds de manière concise et choisis une seule question prioritaire pour avancer.
+
+Slots à compléter (progressivement, de façon naturelle)
+{intervention}, {objectif}, {budget}, {delai}, {nom}, {contact_pref}, {antecedents}.
+Quand tu as assez d’éléments, propose calmement un rendez-vous (présentiel ou visio) avec des créneaux possibles.
+
+Rappel
+- Chaque message = reconnaissance + réponse utile + une seule question qui fait progresser.
+- Garde un ton humain, jamais mécanique, même après 20 échanges.
 `.trim();
 
 /* ============== MEMOIRE ============== */
-const MAX_TURNS = 28; // 14 allers-retours
-const TTL_MS = 72 * 60 * 60 * 1000; // 72h
+const MAX_TURNS = 28;
+const TTL_MS = 72 * 60 * 60 * 1000;
 
 function getConv(db, id) {
   const now = Date.now();
@@ -141,111 +172,202 @@ function push(conv, role, content) {
   conv.updated_at = Date.now();
 }
 
-/* ============== EXTRACTION SLOTS ROBUSTE ============== */
-const INTERVENTIONS = [
-  "augmentation mammaire", "augmentations mammaires", "augmentation des seins",
-  "implants mammaires", "prothèse mammaire", "mastoplastie d'augmentation",
-  "rhinoplastie", "liposuccion", "abdominoplastie", "lifting", "lifting cervico-facial",
-  "otoplastie", "blépharoplastie", "bbl", "lipofilling", "greffe capillaire",
-  "botox", "toxine botulique", "acide hyaluronique", "filler", "peeling", "laser",
-];
-
-function detectIntervention(t) {
-  for (const k of INTERVENTIONS) {
-    const rx = new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    if (rx.test(t)) return k;
-  }
-  return null;
-}
-
-function parseBudget(t) {
-  // ex: 3000 ; 3 500 ; 3k ; 3.5k ; 2-3k ; 2500-4000
-  const rangeK = t.match(/(\d+(?:[\.,]\d+)?)\s*k\s*[-à–]\s*(\d+(?:[\.,]\d+)?)\s*k/i);
-  if (rangeK) return Math.round(parseFloat(rangeK[1].replace(",", ".")) * 1000);
-  const range = t.match(/(\d[\d\s]{2,})\s*[-à–]\s*(\d[\d\s]{2,})/);
-  if (range) return Number(range[1].replace(/\s/g, ""));
-  const k = t.match(/(\d+(?:[\.,]\d+)?)\s*k\b/i);
-  if (k) return Math.round(parseFloat(k[1].replace(",", ".")) * 1000);
-  const n = t.match(/(\d[\d\s]{2,})\s*€?/);
-  if (n) return Number(n[1].replace(/\s/g, ""));
-  return null;
-}
-
-function parseDelay(t) {
-  const m =
-    t.match(/\b(\d+)\s*jours?\b/i) ||
-    t.match(/\b(\d+)\s*semaines?\b/i) ||
-    t.match(/\b(\d+)\s*mois?\b/i) ||
-    t.match(/\b(urgent|dès que possible|au plus vite|ce mois-ci|ce mois|cet été|cet automne|cet hiver)\b/i);
-  return m ? m[0] : null;
-}
-
-function parseName(text) {
-  const p =
-    text.match(/je m'?appelle\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,30})/i) ||
-    text.match(/moi c'?est\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,30})/i) ||
-    text.match(/mon nom est\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,30})/i);
-  return p ? p[1].trim() : null;
-}
-
-function parseContactPref(t) {
-  if (/whats?app/i.test(t)) return "WhatsApp";
-  if (/appel|téléphone/i.test(t)) return "téléphone";
-  if (/mail|e-?mail|courriel/i.test(t)) return "email";
-  return null;
-}
-
+/* ============== SLOTS (simple mais utiles) ============== */
 function extractSlots(slots, text) {
   const t = (text || "").toLowerCase();
-
-  const intr = detectIntervention(t);
-  if (intr && !slots.intervention) slots.intervention = intr;
-
-  const b = parseBudget(t);
-  if (b && !slots.budget) slots.budget = String(b);
-
-  const d = parseDelay(t);
-  if (d && !slots.delai) slots.delai = d;
-
-  const n = parseName(text);
-  if (n && !slots.nom) slots.nom = n;
-
-  const c = parseContactPref(text);
-  if (c && !slots.contact_pref) slots.contact_pref = c;
-
+  if (/greffe/.test(t) && !slots.intervention) slots.intervention = "greffe capillaire";
+  const b = t.match(/(\d[\d\s]{2,})\s*€?/);
+  if (b && !slots.budget) slots.budget = b[1].replace(/\s/g, "");
+  if (/urgent|dès que possible/.test(t) && !slots.delai) slots.delai = "urgent";
+  const n = text.match(/je m'?appelle\s+([A-Za-zÀ-ÖØ-öø-ÿ' -]{2,30})/i);
+  if (n && !slots.nom) slots.nom = n[1].trim();
   return slots;
 }
-
 const slotsLine = (s) =>
   [
     s.intervention ? `Intervention=${s.intervention}` : null,
-    s.objectif ? `Objectif=${s.objectif}` : null,
     s.budget ? `Budget=${s.budget}€` : null,
     s.delai ? `Délai=${s.delai}` : null,
     s.nom ? `Nom=${s.nom}` : null,
-    s.contact_pref ? `Contact=${s.contact_pref}` : null,
   ]
     .filter(Boolean)
     .join(" | ");
 
-/* ============== OPENAI CALLS (seul orateur) ============== */
+/* ============== OPENAI ============== */
 async function chatCompletes(apiKey, messages, maxTokens = 360) {
+  const payload = {
+    model: "gpt-4o-mini",
+    temperature: 0.35,
+    max_tokens: maxTokens,
+    presence_penalty: 0.15,
+    frequency_penalty: 0.35,
+    messages,
+  };
+  if (DEBUG) {
+    dbg("openai_payload_preview", {
+      ...payload,
+      messages: payload.messages.map((m) => ({
+        role: m.role,
+        content: Array.isArray(m.content)
+          ? m.content.map((c) =>
+              c.type === "input_image"
+                ? { type: "input_image", image_url: { url: "[redacted]" } }
+                : c
+            )
+          : redact(m.content, 600),
+      })),
+    });
+  }
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "gpt-4o-mini",
-      temperature: 0.35,
-      max_tokens: maxTokens,
-      presence_penalty: 0.15,
-      frequency_penalty: 0.35,
-      messages,
-    }),
+    body: JSON.stringify(payload),
   });
   const j = await r.json();
-  if (j.error) throw j.error;
+  if (j.error) {
+    dbg("openai_error", j.error);
+    throw j.error;
+  }
   return j.choices?.[0]?.message?.content ?? "";
 }
+
+/* ============== MEDIA (PHOTO) ============== */
+async function fetchMediaBase64(mediaId, waToken) {
+  const meta = await fetch(`https://graph.facebook.com/v20.0/${mediaId}`, {
+    headers: { Authorization: `Bearer ${waToken}` },
+  }).then((r) => r.json());
+  if (!meta?.url) throw new Error("media url not found");
+  const bin = await fetch(meta.url, { headers: { Authorization: `Bearer ${waToken}` } }).then((r) =>
+    r.arrayBuffer()
+  );
+  const b64 = Buffer.from(bin).toString("base64");
+  const mime = meta.mime_type || "image/jpeg";
+  return `data:${mime};base64,${b64}`;
+}
+
+/* ============== WHATSAPP VERIFY ============== */
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+  if (mode === "subscribe" && token === norm(VERIFY_TOKEN)) return res.status(200).send(challenge);
+  return res.sendStatus(403);
+});
+
+/* ============== WHATSAPP WEBHOOK ============== */
+app.post("/webhook", async (req, res) => {
+  try {
+    const entry = req.body?.entry?.[0];
+    const change = entry?.changes?.[0]?.value;
+    const msg = Array.isArray(change?.messages) ? change.messages[0] : null;
+    if (!msg) return res.sendStatus(200);
+
+    const phoneNumberId = norm(change?.metadata?.phone_number_id);
+    const from = msg.from;
+    const messageId = msg.id;
+    if (!phoneNumberId || !from || !messageId) return res.sendStatus(200);
+
+    const db = readDB();
+    if (alreadyHandled(db, messageId)) {
+      writeDB(db);
+      return res.sendStatus(200);
+    }
+
+    let client =
+      db.clients.find((c) => c.status === "active" && sameId(c.phone_number_id, phoneNumberId)) || {
+        id: "fallback",
+        status: "active",
+        phone_number_id: phoneNumberId,
+        wa_token: DEFAULT_WA_TOKEN,
+        openai_key: OPENAI_API_KEY,
+        prompt: BASE_PROMPT,
+      };
+    const useToken = norm(client.wa_token || DEFAULT_WA_TOKEN);
+    const useOpenAI = norm(client.openai_key || OPENAI_API_KEY);
+
+    const conversationId = `${phoneNumberId}_${from}`;
+    const conv = getConv(db, conversationId);
+
+    let userParts = [];
+    if (msg.type === "text" && msg.text?.body) {
+      const text = msg.text.body.trim();
+      extractSlots(conv.slots, text);
+      if (/^bon[j]?our\b/i.test(text)) conv.greeted = true;
+      userParts.push({ type: "text", text });
+      push(conv, "user", text);
+    }
+    if (msg.type === "image" && msg.image?.id) {
+      const dataUrl = await fetchMediaBase64(msg.image.id, useToken);
+      userParts.push({ type: "input_image", image_url: { url: dataUrl } });
+      push(conv, "user", "[image reçue]");
+    }
+
+    // ignorer les messages non-texte/non-image
+    if (userParts.length === 0) {
+      writeDB(db);
+      return res.sendStatus(200);
+    }
+
+    const dynamicSystem = [
+      client.prompt || BASE_PROMPT,
+      `Slots connus: ${slotsLine(conv.slots) || "aucun"}`,
+      conv.summary ? `Résumé: ${conv.summary}` : "Résumé: aucun",
+      conv.greeted ? "Note: déjà salué; ne pas resaluer." : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const historyMsgs = conv.history.map((m) => ({ role: m.role, content: m.content }));
+    dbg("system_prompt", redact(dynamicSystem, 1200));
+    dbg("history_count", conv.history.length);
+    dbg("user_parts_preview", redact(userParts, 800));
+
+    const reply = await chatCompletes(
+      useOpenAI,
+      [{ role: "system", content: dynamicSystem }, ...historyMsgs, { role: "user", content: userParts }],
+      360
+    );
+    dbg("openai_reply", redact(reply, 1200));
+
+    if (!reply) {
+      writeDB(db);
+      return res.sendStatus(200);
+    }
+    push(conv, "assistant", reply);
+
+    try {
+      const sum = await chatCompletes(
+        useOpenAI,
+        [
+          {
+            role: "system",
+            content: "Résume en 2 phrases max les infos utiles déjà obtenues (slots + points clés). Français.",
+          },
+          { role: "user", content: JSON.stringify({ slots: conv.slots, lastTurns: conv.history.slice(-8) }) },
+        ],
+        120
+      );
+      if (sum) conv.summary = sum;
+      dbg("summary_update", redact(conv.summary, 300));
+      dbg("slots", conv.slots);
+    } catch (_) {}
+
+    db.conversations[conversationId] = conv;
+    writeDB(db);
+
+    await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${useToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ messaging_product: "whatsapp", to: from, type: "text", text: { body: reply } }),
+    });
+
+    log.info("msg OK", { conversationId, messageId, turns: conv.history.length });
+    res.sendStatus(200);
+  } catch (e) {
+    log.error("webhook", e);
+    res.sendStatus(500);
+  }
+});
 
 /* ============== STRIPE ============== */
 app.post("/checkout/create", async (req, res) => {
@@ -316,122 +438,22 @@ app.post("/onboarding/complete", (req, res) => {
   }
 });
 
-/* ============== VERIFY WEBHOOK ============== */
-app.get("/webhook", (req, res) => {
-  const mode = req.query["hub.mode"],
-    token = req.query["hub.verify_token"],
-    challenge = req.query["hub.challenge"];
-  if (mode === "subscribe" && token === norm(VERIFY_TOKEN)) return res.status(200).send(challenge);
-  return res.sendStatus(403);
-});
-
-/* ============== WHATSAPP WEBHOOK ============== */
-app.post("/webhook", async (req, res) => {
-  try {
-    const entry = req.body?.entry?.[0];
-    const change = entry?.changes?.[0]?.value;
-
-    // traiter uniquement un vrai message texte
-    const msg = Array.isArray(change?.messages) ? change.messages[0] : null;
-    if (!msg || msg.type !== "text" || !msg.text?.body) return res.sendStatus(200);
-
-    const phoneNumberId = norm(change?.metadata?.phone_number_id);
-    const from = msg.from;
-    const text = msg.text.body.trim();
-    const messageId = msg.id;
-
-    if (!from || !text || !phoneNumberId) return res.sendStatus(200);
-
-    const db = readDB();
-    if (alreadyHandled(db, messageId)) {
-      writeDB(db);
-      return res.sendStatus(200);
-    }
-
-    let client =
-      db.clients.find((c) => c.status === "active" && sameId(c.phone_number_id, phoneNumberId)) || {
-        id: "fallback",
-        status: "active",
-        phone_number_id: phoneNumberId,
-        wa_token: DEFAULT_WA_TOKEN,
-        openai_key: OPENAI_API_KEY,
-        prompt: BASE_PROMPT,
-      };
-    const useToken = norm(client.wa_token || DEFAULT_WA_TOKEN);
-    const useOpenAI = norm(client.openai_key || OPENAI_API_KEY);
-
-    const conversationId = `${phoneNumberId}_${from}`;
-    const conv = getConv(db, conversationId);
-
-    // mémoire (jamais on ne modifie le texte utilisateur)
-    extractSlots(conv.slots, text);
-    if (/^bon[j]?our\b/i.test(text)) conv.greeted = true;
-
-    // prompt dynamique à CHAQUE message
-    const dynamicSystem = [
-      client.prompt || BASE_PROMPT,
-      `\nSlots connus: ${slotsLine(conv.slots) || "aucun"}`,
-      conv.summary ? `Résumé: ${conv.summary}` : "Résumé: aucun",
-      conv.greeted ? "Note: l'utilisateur a déjà été salué; ne pas resaluer." : "",
-      "Rappel: évite les répétitions et n’insiste pas deux fois d’affilée sur la même question.",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    // historique utile (derniers tours)
-    const historyMsgs = conv.history.map((m) => ({ role: m.role, content: m.content }));
-
-    // OpenAI génère tout
-    push(conv, "user", text);
-    let reply = "";
-    try {
-      reply = await chatCompletes(
-        useOpenAI,
-        [{ role: "system", content: dynamicSystem }, ...historyMsgs, { role: "user", content: text }],
-        360
-      );
-    } catch (e) {
-      log.error("OpenAI chat", e);
-      writeDB(db);
-      return res.sendStatus(200); // pas de fallback texte
-    }
-
-    if (!reply) {
-      writeDB(db);
-      return res.sendStatus(200);
-    }
-
-    push(conv, "assistant", reply);
-
-    // résumé court pour les tours suivants (toujours via OpenAI)
-    try {
-      const sum = await chatCompletes(
-        useOpenAI,
-        [
-          { role: "system", content: "Résume en 2 phrases max les infos utiles déjà obtenues (slots + points clés). Français." },
-          { role: "user", content: JSON.stringify({ slots: conv.slots, lastTurns: conv.history.slice(-8) }) },
-        ],
-        120
-      );
-      if (sum) conv.summary = sum;
-    } catch (_) {}
-
-    db.conversations[conversationId] = conv;
-    writeDB(db);
-
-    // envoi WhatsApp
-    await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${useToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", to: from, type: "text", text: { body: reply } }),
-    });
-
-    log.info("msg OK", { conversationId, messageId, turns: conv.history.length });
-    res.sendStatus(200);
-  } catch (e) {
-    log.error("webhook", e);
-    res.sendStatus(500);
-  }
+/* ============== DEBUG MEMOIRE ============== */
+app.get("/debug/:conversationId", (req, res) => {
+  if (!DEBUG) return res.status(403).json({ error: "debug disabled" });
+  const id = String(req.params.conversationId || "");
+  const db = readDB();
+  const conv = db.conversations[id];
+  if (!conv) return res.status(404).json({ error: "conversation not found" });
+  const last = conv.history.slice(-12);
+  return res.json({
+    conversationId: id,
+    greeted: !!conv.greeted,
+    slots: conv.slots || {},
+    summary: conv.summary || "",
+    history_last_count: last.length,
+    history_last: last,
+  });
 });
 
 /* ============== HEALTH ============== */
@@ -442,6 +464,7 @@ app.get("/health", (req, res) => {
     clients: db.clients.length,
     conversations: Object.keys(db.conversations || {}).length,
     processed: Object.keys(db.processed || {}).length,
+    debug: DEBUG,
   });
 });
 
