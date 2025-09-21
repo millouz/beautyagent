@@ -130,6 +130,7 @@ Anamnèse progressive (cadence humaine)
 Avance naturellement selon les réponses, sans précipiter la collecte.
 
 Vision (photos)
+- Tu peux recevoir et analyser des photos.
 - Décris avec prudence ce que tu observes, mentionne limites (angle, lumière).
 - Pour greffe capillaire : propose une fourchette indicative de greffons ou zones, mais précise que seule la consultation médicale confirmera.
 - Si la photo est insuffisante, demande poliment d’autres vues (face, profil, sommet) en bonne lumière.
@@ -210,8 +211,8 @@ async function chatCompletes(apiKey, messages, maxTokens = 360) {
         role: m.role,
         content: Array.isArray(m.content)
           ? m.content.map((c) =>
-              c.type === "input_image"
-                ? { type: "input_image", image_url: { url: "[redacted]" } }
+              c.type === "image_url"
+                ? { type: "image_url", image_url: { url: "[redacted]" } }
                 : c
             )
           : redact(m.content, 600),
@@ -298,11 +299,10 @@ app.post("/webhook", async (req, res) => {
     }
     if (msg.type === "image" && msg.image?.id) {
       const dataUrl = await fetchMediaBase64(msg.image.id, useToken);
-      userParts.push({ type: "input_image", image_url: { url: dataUrl } });
+      userParts.push({ type: "image_url", image_url: { url: dataUrl } });
       push(conv, "user", "[image reçue]");
     }
 
-    // ignorer les messages non-texte/non-image
     if (userParts.length === 0) {
       writeDB(db);
       return res.sendStatus(200);
@@ -313,6 +313,7 @@ app.post("/webhook", async (req, res) => {
       `Slots connus: ${slotsLine(conv.slots) || "aucun"}`,
       conv.summary ? `Résumé: ${conv.summary}` : "Résumé: aucun",
       conv.greeted ? "Note: déjà salué; ne pas resaluer." : "",
+      "Quand une photo est envoyée: tu la reçois, tu la décris prudemment et tu donnes des indications si pertinent.",
     ]
       .filter(Boolean)
       .join("\n");
@@ -426,48 +427,4 @@ app.post("/onboarding/complete", (req, res) => {
     if (!c) return res.status(404).json({ error: "session not found" });
     c.status = "active";
     c.clinic = clinic_name;
-    c.phone_number_id = norm(phone_number_id || DEFAULT_PHONE_NUMBER_ID);
-    c.wa_token = wa_token || DEFAULT_WA_TOKEN;
-    c.openai_key = openai_key || OPENAI_API_KEY;
-    c.prompt = prompt || BASE_PROMPT;
-    writeDB(db);
-    res.json({ ok: true });
-  } catch (e) {
-    log.error("onboarding", e);
-    res.status(500).json({ error: "onboarding" });
-  }
-});
-
-/* ============== DEBUG MEMOIRE ============== */
-app.get("/debug/:conversationId", (req, res) => {
-  if (!DEBUG) return res.status(403).json({ error: "debug disabled" });
-  const id = String(req.params.conversationId || "");
-  const db = readDB();
-  const conv = db.conversations[id];
-  if (!conv) return res.status(404).json({ error: "conversation not found" });
-  const last = conv.history.slice(-12);
-  return res.json({
-    conversationId: id,
-    greeted: !!conv.greeted,
-    slots: conv.slots || {},
-    summary: conv.summary || "",
-    history_last_count: last.length,
-    history_last: last,
-  });
-});
-
-/* ============== HEALTH ============== */
-app.get("/health", (req, res) => {
-  const db = readDB();
-  res.json({
-    status: "ok",
-    clients: db.clients.length,
-    conversations: Object.keys(db.conversations || {}).length,
-    processed: Object.keys(db.processed || {}).length,
-    debug: DEBUG,
-  });
-});
-
-app.listen(port, () => log.info(`BeautyAgent sur ${port}`, { env: NODE_ENV }));
-
-export default app;
+    c.phone_number
