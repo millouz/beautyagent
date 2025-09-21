@@ -427,4 +427,48 @@ app.post("/onboarding/complete", (req, res) => {
     if (!c) return res.status(404).json({ error: "session not found" });
     c.status = "active";
     c.clinic = clinic_name;
-    c.phone_number
+    c.phone_number_id = norm(phone_number_id || DEFAULT_PHONE_NUMBER_ID);
+    c.wa_token = wa_token || DEFAULT_WA_TOKEN;
+    c.openai_key = openai_key || OPENAI_API_KEY;
+    c.prompt = prompt || BASE_PROMPT;
+    writeDB(db);
+    res.json({ ok: true });
+  } catch (e) {
+    log.error("onboarding", e);
+    res.status(500).json({ error: "onboarding" });
+  }
+});
+
+/* ============== DEBUG MEMOIRE ============== */
+app.get("/debug/:conversationId", (req, res) => {
+  if (!DEBUG) return res.status(403).json({ error: "debug disabled" });
+  const id = String(req.params.conversationId || "");
+  const db = readDB();
+  const conv = db.conversations[id];
+  if (!conv) return res.status(404).json({ error: "conversation not found" });
+  const last = conv.history.slice(-12);
+  return res.json({
+    conversationId: id,
+    greeted: !!conv.greeted,
+    slots: conv.slots || {},
+    summary: conv.summary || "",
+    history_last_count: last.length,
+    history_last: last,
+  });
+});
+
+/* ============== HEALTH ============== */
+app.get("/health", (req, res) => {
+  const db = readDB();
+  res.json({
+    status: "ok",
+    clients: db.clients.length,
+    conversations: Object.keys(db.conversations || {}).length,
+    processed: Object.keys(db.processed || {}).length,
+    debug: DEBUG,
+  });
+});
+
+app.listen(port, () => log.info(`BeautyAgent sur ${port}`, { env: NODE_ENV }));
+
+export default app;
