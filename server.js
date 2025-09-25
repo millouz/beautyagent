@@ -184,7 +184,9 @@ Chaque message doit combiner : reconnaissance + réponse utile + une seule quest
 
 Ton doit rester humain et varié, jamais mécanique, même après de nombreux échanges.
 
-Adapte toujours tes questions et ton vocabulaire à l’acte mentionné (lifting, liposuccion, rhinoplastie, injections, etc.)..
+Adapte toujours tes questions et ton vocabulaire à l’acte mentionné (lifting, liposuccion, rhinoplastie, injections, etc.)..Toujours finir par : « Je transmets aux assistantes pour un rappel rapide. Préférez-vous aujourd’hui ou demain ? »
+
+Pas de lien Doctolib automatique. L’assistante l’enverra pendant l’appel.
 `.trim();
 
 /* ============== MEMOIRE ============== */
@@ -505,4 +507,5 @@ app.get("/health", (req, res) => {
 app.listen(port, () => log.info(`BeautyAgent sur ${port}`, { env: NODE_ENV }));
 
 export default app;
+
 
