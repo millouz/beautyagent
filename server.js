@@ -1,5 +1,5 @@
 import express from "express";
-import fetch from "node-fetch";
+import fetch from "node-fetch"; // OK si présent. Node 18+ a aussi fetch global.
 import Stripe from "stripe";
 import fs from "fs";
 import path from "path";
@@ -14,17 +14,13 @@ const log = {
 };
 
 /* ============== MIDDLEWARE ============== */
+/* Important: le raw parser DOIT être monté AVANT la route stripe-webhook */
 app.use("/stripe-webhook", express.raw({ type: "application/json" }));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 /* ============== ENV ============== */
-const need = ["STRIPE_SECRET", "STRIPE_PRICE_ID", "STRIPE_WEBHOOK_SECRET"];
-const miss = need.filter((v) => !process.env[v]);
-if (miss.length) {
-  log.error(`ENV manquantes: ${miss.join(", ")}`);
-  process.exit(1);
-}
+/* Ne bloque plus le démarrage si Stripe n'est pas configuré */
 const {
   PORT = 3000,
   STRIPE_SECRET,
@@ -39,16 +35,26 @@ const {
 } = process.env;
 
 const DEBUG = /^true$/i.test(DEBUG_AGENT);
-const stripe = new Stripe(STRIPE_SECRET);
-const port = Number(PORT);
+const port = Number(PORT) || 3000;
+
+/* Stripe optionnel */
+const STRIPE_ENABLED = Boolean(STRIPE_SECRET && STRIPE_WEBHOOK_SECRET);
+const stripe = STRIPE_ENABLED ? new Stripe(STRIPE_SECRET) : null;
+if (!STRIPE_ENABLED) {
+  log.warn("Stripe désactivé: définir STRIPE_SECRET et STRIPE_WEBHOOK_SECRET pour l'activer");
+}
+if (STRIPE_ENABLED && !STRIPE_PRICE_ID) {
+  log.warn("STRIPE_PRICE_ID manquant: /checkout/create retournera 501");
+}
 
 /* ============== DB JSON ============== */
 const DB_PATH = path.resolve("./db.json");
-if (!fs.existsSync(DB_PATH))
+if (!fs.existsSync(DB_PATH)) {
   fs.writeFileSync(
     DB_PATH,
     JSON.stringify({ clients: [], conversations: {}, processed: {} }, null, 2)
   );
+}
 
 function ensureDBShape(db) {
   db.clients ??= [];
@@ -106,87 +112,42 @@ Tu es Beautyagent, l’assistante humaine en ligne d’une clinique de chirurgie
 Tu accueilles, écoutes, rassures et organises la prise en charge. Tu avances pas à pas, avec naturel, chaleur et professionnalisme.
 
 Style
-
 Comme une vraie hôtesse médicale expérimentée : empathique, polie, chaleureuse.
-
 Messages courts (1–3 phrases), ton fluide et humain.
-
 Montre l’écoute : reformule ou réagis brièvement (« je comprends », « d’accord », « hm oui bien sûr »).
-
 Varie légèrement la ponctuation, insère parfois des respirations (“…”) ou de petites interjections (« très bien », « je vois »).
-
 Utilise des émojis légers de temps en temps (✨😊📅), jamais systématiquement.
-
 Pas de copier-coller mécanique d’une tournure, varie un peu tes débuts de phrases.
 
 Mémoire & continuité
-
 Prends en compte tout l’historique et les informations déjà données.
-
 Ne repose pas une info déjà fournie.
-
 Ne redis “Bonjour” qu’une seule fois. Si le patient redit bonjour, réponds naturellement mais sans resaluer.
-
 Tous les 4–6 échanges, propose un mini-récapitulatif naturel (« donc si je résume… ») et demande validation.
 
 Anamnèse progressive (cadence humaine)
-
 Motif & attentes
-
-Si la personne cite une intervention précise (ex. lifting, liposuccion, rhinoplastie), pose des questions intelligentes et ciblées sur cette intervention (zones, objectifs, options courantes).
-
-Donne des options de réponse fermées + une option libre plutôt qu’une question trop vague.
-
-Exemple lifting : « Pour un lifting, souhaitez-vous plutôt traiter le bas du visage/ovale, le cou, le mi-visage (pommettes), ou le front/sourcils ? »
-
-Contexte pratique : délai idéal, vacances, projets, contraintes professionnelles.
-
-Budget indicatif, posé avec tact, jamais insistant.
-
-Santé générale : antécédents, tabac, chirurgie récente, grossesse.
-
-Identité et coordonnées : prénom + contact préféré (WhatsApp/téléphone/mail).
-➡️ Avance naturellement, sans précipiter.
+Si la personne cite une intervention précise (ex. lifting, liposuccion, rhinoplastie), pose des questions intelligentes et ciblées (zones, objectifs, options).
+Donne des options fermées + une option libre plutôt qu’une question trop vague.
 
 Vision (photos)
-
-Tu peux recevoir et commenter des photos.
-
-Décris avec prudence ce que tu observes, souligne les limites (angle, lumière).
-
-Greffe capillaire : tu peux donner une fourchette indicative de greffons ou zones, mais précise que seule la consultation médicale confirmera.
-
-Si photo insuffisante : demande poliment d’autres vues (face, profil, sommet).
+Tu peux recevoir et commenter des photos. Décris prudemment et souligne les limites (angle, lumière).
 
 Précautions
-
-Aucune promesse de résultat, aucun diagnostic médical.
-
-Les estimations sont des ordres de grandeur informatifs.
-
-Les décisions médicales appartiennent au chirurgien après examen.
+Aucune promesse de résultat, aucun diagnostic médical. Les estimations sont indicatives. Décision médicale par le chirurgien après examen.
 
 Gestion spéciale
+Si on demande si tu es un robot/IA : « Je m’occupe de l’accueil en ligne de la clinique et je vous accompagne 🙂 », puis poursuis.
+Si la personne est sèche : excuse courte, réponse utile, et on avance.
 
-Si on demande si tu es un robot/IA : « Je m’occupe de l’accueil en ligne de la clinique et je vous accompagne pour votre demande 🙂 », puis poursuis normalement.
-
-Si la personne est sèche ou mécontente : excuse-toi brièvement, réponds utilement, et poursuis doucement.
-
-Si plusieurs questions en même temps : réponds de façon concise et choisis une seule question prioritaire pour avancer.
-
-Slots à compléter (progressivement et naturellement)
+Slots à compléter
 {intervention}, {objectif}, {delai}, {budget}, {antecedents}, {nom}, {contact_pref}.
-Quand tu as suffisamment d’éléments, propose calmement un rendez-vous (présentiel ou visio), avec créneaux via Doctolib.
+Quand assez d’éléments, propose calmement un rendez-vous (présentiel ou visio), créneaux via Doctolib.
 
 Rappel
-
-Chaque message doit combiner : reconnaissance + réponse utile + une seule question qui fait progresser.
-
-Ton doit rester humain et varié, jamais mécanique, même après de nombreux échanges.
-
-Adapte toujours tes questions et ton vocabulaire à l’acte mentionné (lifting, liposuccion, rhinoplastie, injections, etc.)..Toujours finir par : « Je transmets aux assistantes pour un rappel rapide. Préférez-vous aujourd’hui ou demain ? »
-
-Pas de lien Doctolib automatique. L’assistante l’enverra pendant l’appel.
+Chaque message = reconnaissance + réponse utile + une question pour avancer.
+Adapte toujours au type d’acte mentionné.
+Toujours finir par : « Je transmets aux assistantes pour un rappel rapide. Préférez-vous aujourd’hui ou demain ? »
 `.trim();
 
 /* ============== MEMOIRE ============== */
@@ -208,7 +169,7 @@ function push(conv, role, content) {
   conv.updated_at = Date.now();
 }
 
-/* ============== SLOTS (simple mais utiles) ============== */
+/* ============== SLOTS (simple) ============== */
 function extractSlots(slots, text) {
   const t = (text || "").toLowerCase();
   if (/greffe/.test(t) && !slots.intervention) slots.intervention = "greffe capillaire";
@@ -231,6 +192,10 @@ const slotsLine = (s) =>
 
 /* ============== OPENAI ============== */
 async function chatCompletes(apiKey, messages, maxTokens = 360) {
+  if (!apiKey) {
+    // Fallback minimal si clé absente
+    return "Merci pour votre message. Je transmets aux assistantes pour un rappel rapide. Préférez-vous aujourd’hui ou demain ?";
+  }
   const payload = {
     model: "gpt-4o-mini",
     temperature: 0.35,
@@ -333,9 +298,13 @@ app.post("/webhook", async (req, res) => {
       push(conv, "user", text);
     }
     if (msg.type === "image" && msg.image?.id) {
-      const dataUrl = await fetchMediaBase64(msg.image.id, useToken);
-      userParts.push({ type: "image_url", image_url: { url: dataUrl } });
-      push(conv, "user", "[image reçue]");
+      try {
+        const dataUrl = await fetchMediaBase64(msg.image.id, useToken);
+        userParts.push({ type: "image_url", image_url: { url: dataUrl } });
+        push(conv, "user", "[image reçue]");
+      } catch (e) {
+        log.warn("media_fetch_failed", { id: msg.image.id });
+      }
     }
 
     if (userParts.length === 0) {
@@ -358,11 +327,18 @@ app.post("/webhook", async (req, res) => {
     dbg("history_count", conv.history.length);
     dbg("user_parts_preview", redact(userParts, 800));
 
-    const reply = await chatCompletes(
-      useOpenAI,
-      [{ role: "system", content: dynamicSystem }, ...historyMsgs, { role: "user", content: userParts }],
-      360
-    );
+    let reply = "";
+    try {
+      reply = await chatCompletes(
+        useOpenAI,
+        [{ role: "system", content: dynamicSystem }, ...historyMsgs, { role: "user", content: userParts }],
+        360
+      );
+    } catch (e) {
+      log.error("openai_call", e);
+      reply =
+        "Merci pour votre message. Je transmets aux assistantes pour un rappel rapide. Préférez-vous aujourd’hui ou demain ?";
+    }
     dbg("openai_reply", redact(reply, 1200));
 
     if (!reply) {
@@ -391,11 +367,13 @@ app.post("/webhook", async (req, res) => {
     db.conversations[conversationId] = conv;
     writeDB(db);
 
-    await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${useToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ messaging_product: "whatsapp", to: from, type: "text", text: { body: reply } }),
-    });
+    if (useToken && phoneNumberId && from) {
+      await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${useToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ messaging_product: "whatsapp", to: from, type: "text", text: { body: reply } }),
+      }).catch((e) => log.warn("wa_send_failed", { e: String(e) }));
+    }
 
     log.info("msg OK", { conversationId, messageId, turns: conv.history.length });
     res.sendStatus(200);
@@ -407,6 +385,8 @@ app.post("/webhook", async (req, res) => {
 
 /* ============== STRIPE ============== */
 app.post("/checkout/create", async (req, res) => {
+  if (!STRIPE_ENABLED || !stripe) return res.status(501).json({ error: "stripe_disabled" });
+  if (!STRIPE_PRICE_ID) return res.status(501).json({ error: "price_missing" });
   try {
     const { email } = req.body || {};
     const session = await stripe.checkout.sessions.create({
@@ -425,6 +405,7 @@ app.post("/checkout/create", async (req, res) => {
 });
 
 app.post("/stripe-webhook", (req, res) => {
+  if (!STRIPE_ENABLED || !stripe) return res.status(501).send("stripe_disabled");
   try {
     const sig = req.headers["stripe-signature"];
     if (!sig) return res.status(400).json({ error: "no signature" });
@@ -493,7 +474,7 @@ app.get("/debug/:conversationId", (req, res) => {
 });
 
 /* ============== HEALTH ============== */
-app.get("/health", (req, res) => {
+app.get("/health", (_req, res) => {
   const db = readDB();
   res.json({
     status: "ok",
@@ -501,11 +482,10 @@ app.get("/health", (req, res) => {
     conversations: Object.keys(db.conversations || {}).length,
     processed: Object.keys(db.processed || {}).length,
     debug: DEBUG,
+    stripe: STRIPE_ENABLED,
   });
 });
 
 app.listen(port, () => log.info(`BeautyAgent sur ${port}`, { env: NODE_ENV }));
 
 export default app;
-
-
