@@ -1,3 +1,7 @@
+const path = require('path');
+// charge .env à la racine du projet au runtime Render
+require('dotenv').config({ path: path.resolve(process.cwd(), '.env') });
+
 import express from "express";
 import fetch from "node-fetch"; // OK si présent. Node 18+ a aussi fetch global.
 import Stripe from "stripe";
@@ -489,3 +493,4 @@ app.get("/health", (_req, res) => {
 app.listen(port, () => log.info(`BeautyAgent sur ${port}`, { env: NODE_ENV }));
 
 export default app;
+
